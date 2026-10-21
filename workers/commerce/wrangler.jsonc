@@ -33,7 +33,6 @@
 			"workers_dev": false,
 			"preview_urls": false,
 			"routes": [],
-			// Deliberately unprovisioned: shared with the Application Worker's demo placeholder.
 			"d1_databases": [
 				{
 					"binding": "DB",

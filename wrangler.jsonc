@@ -20,8 +20,8 @@
   "d1_databases": [
     {
       "binding": "DB",
-      "database_name": "commerce-local",
-      "database_id": "00000000-0000-0000-0000-000000000001"
+      "database_name": "customer-service-demo",
+      "database_id": "882ea69f-71c1-484d-8e4e-48f6cc09c209"
     }
   ],
   "vars": {
@@ -45,12 +45,11 @@
           "service": "customer-service-commerce-demo"
         }
       ],
-      // Placeholder only: no remote resource was provisioned. Replace before a future deployment.
       "d1_databases": [
         {
           "binding": "DB",
-          "database_name": "commerce-demo",
-          "database_id": "00000000-0000-0000-0000-000000000002"
+          "database_name": "customer-service-demo",
+          "database_id": "882ea69f-71c1-484d-8e4e-48f6cc09c209"
         }
       ],
       "vars": {
