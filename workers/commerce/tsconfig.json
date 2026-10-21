@@ -1,0 +1,6 @@
+{
+  "extends": "agents/tsconfig",
+  "compilerOptions": { "types": ["node"] },
+  "include": ["src/**/*", "../../shared/**/*", "env.d.ts"],
+  "exclude": ["node_modules", "../../node_modules"]
+}

@@ -1,5 +1,12 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
   "trailingComma": "none",
-  "printWidth": 80
+  "printWidth": 80,
+  "ignorePatterns": [
+    "PLAN.md",
+    "PROMPTS.md",
+    "env.d.ts",
+    "workers/commerce/env.d.ts",
+    ".idea/**"
+  ]
 }

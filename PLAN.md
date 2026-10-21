@@ -1,6 +1,6 @@
 # Customer service agent build plan
 
-Status: complete build plan, following the user's final confirmation of shared understanding. Planning only: no application code, migrations, packages, resources, deployment, or commits have been created. PROMPTS.md preserves the available interview and original requirements. The unavailable screenshot was not inspected and is not a dependency.
+Status: complete build plan; **Milestone 1 only is implemented** following the later implementation prompt in PROMPTS.md. Milestones 2–6 remain planned. No remote resources were provisioned, nothing was deployed, and no commits were created. The unavailable screenshot was not inspected and is not a dependency. See the Milestone 1 implementation record below for the verified package choices and checks; earlier starter observations describe the original scaffold.
 
 ## 1. Objective and agreed scope
 
@@ -291,7 +291,7 @@ A customer retry after confirmed failure creates a new immutable action/proposal
 
 Use `agents` plus the starter's `@cloudflare/ai-chat` AIChatAgent and React hooks. Retain bounded persisted messages (starter value 100), chat recovery, and streaming. Store only the owning session's messages and proposal presentation metadata in DO SQLite. Rehydrate canonical order/refund status from MCP after reconnect; prune old tool results and keep model context bounded. DO state synced to the browser must exclude cookies, tokens, signed context, and internal secrets.
 
-Prefer **Workers AI `@cf/meta/llama-3.3-70b-instruct-fp8-fast`** because it is currently documented with function calling and fits the text/tool task. Use the existing workers-ai-provider; set low temperature and bounded output/turn tool steps. Do not guarantee deterministic model output. Milestone 1 must smoke-test eight-tool schemas, streamed tool calls, approval interruption/resumption, and error envelopes with the exact dependency combination. Malformed model calls fail validation without side effects.
+Prefer **Workers AI `@cf/meta/llama-3.3-70b-instruct-fp8-fast`** because it is currently documented with function calling and fits the text/tool task. Milestone 1 uses the current supported `createAI` provider from `agents/models/ai-sdk`, since the official documentation retrieved on 2026-10-21 deprecates the starter's `workers-ai-provider`. Bound output/turn tool steps and do not guarantee deterministic model output. Milestone 1 proves one non-mutating probe with the exact dependency combination; tests of all eight commerce schemas and approval interruption/resumption belong to the later commerce/consent milestones. Malformed model calls must fail validation without side effects.
 
 If the preferred model fails that smoke test or becomes unavailable, select a currently documented tool-capable Workers AI alternative only after verifying its model page and rerunning the same acceptance suite; do not silently substitute a model or bypass approvals. Llama 3.3 is presently supported, so no fallback is required for this plan.
 
@@ -464,4 +464,26 @@ Business/security decisions are resolved; there is no further policy question bl
 - **Old-session visibility:** fresh isolated namespaces do not inherit old commerce history. Document read-only owning-session visibility while its credential remains valid; no account recovery or cross-session history feature is in scope.
 - **Audit scope:** application-level append-only D1 history is sufficient for the assignment; no claim of cryptographic or administrator-resistant audit immutability.
 
-Planning verification: only PLAN.md and PROMPTS.md are deliverables in this stage. Implementation acceptance criteria above are planned tests, not claims that the application exists or passes them.
+The initial planning stage changed only PLAN.md and PROMPTS.md. The subsequent user prompt authorized the Milestone 1 implementation recorded below; later milestone acceptance criteria remain planned tests, not claims of implemented commerce behavior.
+
+## 14. Milestone 1 implementation record — 2026-10-21
+
+Implemented only the platform/transport skeleton. Commerce registers exactly one read-only `milestone_ping` test tool; none of the eight business tools, commerce mutations, approval execution, customer sessions, or refund Workflows exists yet. The old scheduling and arbitrary MCP registration paths were removed. Demo agent/probe routes remain disabled until customer session authorization is implemented.
+
+Verified and pinned `agents@0.29.0`, `@cloudflare/ai-chat@0.12.2`, `ai@7.0.148`, `@ai-sdk/provider@4.0.31`, `@ai-sdk/react@4.0.152`, MCP client/server `2.3.1`, Cloudflare Vite plugin `1.64.0`, and Wrangler `4.151.3`, with the updated npm lockfile. Exact installed declarations, bundle exports, peer resolution, Worker runtime tests, and the official [Workers AI provider documentation](https://developers.cloudflare.com/workers-ai/configuration/ai-sdk/) established these choices. Intermediate chat/Agents combinations had overly broad peer ranges but missing runtime exports. The aligned current stack passed; no forced peer resolution was used. The deprecated external Workers AI provider was replaced by `createAI` from Agents.
+
+The binding-backed SDK fetch adapter supplies an explicit Host header (required by the MCP host validator), fresh signed context per request, stream-preserving forwarding, cookie removal, strict destination validation, and redirect rejection. Application-to-Commerce calls use only `COMMERCE_MCP.fetch()`. Commerce checks HMAC signature, fixed test subject/scope, issuer/audience, nonce shape, and expiry before MCP dispatch. These are synthetic **Milestone 1 test credentials**, not an implementation of future customer identity/approval authorization.
+
+Both local/default and demo targets are configured as planned. Commerce has no workers.dev route, preview URL, or custom/public route. Demo D1 IDs are explicit unprovisioned placeholders, preventing any claim that remote bindings/resources were validated. Local Vite starts both Workers in one command and injects one ephemeral test signing key into both; no real credential is committed or emitted in demo artifacts. The single test D1 marker table lives under `tests/fixtures/`, not commerce migrations.
+
+Verification performed:
+
+- `npm run types` and `npm run types:check`: generated/checked Application and Commerce declarations, default/local plus demo. Demo snapshots are ignored under `.wrangler/types/`; separate TypeScript projects check each environment.
+- `npm run check`: formatting of milestone-owned files, lint, and local/demo/test TypeScript checks. Pre-existing unrelated formatting problems in AGENTS.md, editor settings, and the security workflow were left unchanged.
+- `npm test`: real local Workers/MCP/D1 tests plus Vite auxiliary binding and a real ChatAgent WebSocket turn using the fake model. Test bundles disallow global network fetch. Signed-context negatives, redirects/destinations, no mutation tools, SSE results, fake generation/streaming, and shared D1 are covered.
+- `npm run db:probe` and local Vite/Local Explorer inspection: both Workers read `milestone-1-local-d1` through the same configured D1 ID. Local-only initialization used no Cloudflare database API.
+- `npm run build:demo` and `npm run verify:artifacts`: built both Workers/UI and checked `COMMERCE_MCP -> customer-service-commerce-demo`, private Commerce ingress, shared placeholder D1, and absence of local signing keys/Workflows. This is artifact validation, not deployed binding resolution.
+- `npm run smoke:ai`: **passed using existing Cloudflare authentication**. Llama 3.3 executed the read-only MCP probe through the service binding and matched the shared local D1 marker. No login, provisioning, deployment, or credentials in source were involved. This incurred inference usage only.
+- Independent code/security and specification/TypeScript reviews found no blocking issue. The stale starter README was replaced and the suggested actual chat/DO integration check was added.
+
+Known non-blocking build warnings: missing required demo signing secret is intentional until a later authorized deployment; the client bundle has the standard Vite chunk-size warning. Stop here for user review before starting Milestone 2.

@@ -1,0 +1,23 @@
+name: Milestone 1 checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      WRANGLER_SEND_METRICS: "false"
+      WRANGLER_LOG_PATH: .wrangler/logs
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run types
+      - run: npm run types:check
+      - run: npm run check
+      - run: npm test
+      - run: npm run build:demo
+      - run: npm run verify:artifacts

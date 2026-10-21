@@ -311,3 +311,22 @@ Add acceptance checks for local multi-Worker development, correct demo binding r
 
 Update PROMPTS.md with this instruction in chronological order. This is still a planning-only change: edit PLAN.md and PROMPTS.md only. Do not implement the application, install packages, provision resources, deploy, or commit.
 ```
+
+## 19. User — implement Milestone 1 only
+
+```text
+Implement Milestone 1 from PLAN.md only. Check current official Cloudflare and MCP SDK documentation where needed, and verify the exact package APIs and compatible versions before coding.
+
+The milestone should:
+- Pin compatible Agents, chat, AI SDK/provider, and MCP SDK versions; update the lockfile.
+- Set up the private Commerce MCP Worker and the Application Worker’s COMMERCE_MCP service binding for local and demo environments.
+- Prove MCP Streamable HTTP works through a custom fetch adapter backed by COMMERCE_MCP.fetch(). Use a minimal non-mutating test tool; do not add commerce behavior yet.
+- Ensure the Commerce Worker has no public route, workers.dev address, or preview URL, and that the app has no public-network fallback for MCP calls.
+- Configure local Vite development to run the app and Commerce Worker together. Verify the binding resolves and both Workers see the intended local D1 state.
+- Generate and check Wrangler types for both Workers and their demo environments.
+- Add a fake-model test path for CI and an opt-in Workers AI smoke command for Llama 3.3. Run the live smoke only if Cloudflare authentication is already available; report if it could not be run.
+
+Keep signed MCP request-context validation in the test setup. Missing or invalid context must fail, even over the service binding. No business mutation should be executable at the end of this milestone.
+
+Append this prompt verbatim to PROMPTS.md. Do not provision Cloudflare resources, deploy, add real credentials, or commit changes. Run the relevant checks and report the files changed, commands/tests run, results, and any compatibility issues. Stop after Milestone 1; I’ll review it before asking you to continue.
+```

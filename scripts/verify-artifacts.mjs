@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+const read = async (path) => JSON.parse(await readFile(path, "utf8"));
+const app = await read("dist/customer_service_agent/wrangler.json");
+const commerce = await read("dist/customer_service_commerce/wrangler.json");
+assert.equal(app.name, "customer-service-agent-demo");
+assert.deepEqual(app.services, [
+  { binding: "COMMERCE_MCP", service: "customer-service-commerce-demo" }
+]);
+assert.equal(commerce.name, "customer-service-commerce-demo");
+assert.equal(commerce.workers_dev, false);
+assert.equal(commerce.preview_urls, false);
+assert.deepEqual(commerce.routes, []);
+assert.equal(app.vars.APP_STAGE, "demo");
+assert.equal(app.vars.MCP_AUDIENCE, "commerce-mcp:demo");
+assert.equal(commerce.vars.MCP_AUDIENCE, app.vars.MCP_AUDIENCE);
+assert.equal(
+  app.d1_databases[0].database_id,
+  commerce.d1_databases[0].database_id
+);
+assert.equal(
+  app.d1_databases[0].database_id,
+  "00000000-0000-0000-0000-000000000002"
+);
+for (const config of [app, commerce]) {
+  assert.ok(
+    !("MCP_CONTEXT_KEY" in config.vars),
+    "Local test key must not enter demo artifacts"
+  );
+  assert.ok(config.secrets.required.includes("MCP_CONTEXT_KEY"));
+  assert.equal(
+    config.workflows.length,
+    0,
+    "Refund execution is outside Milestone 1"
+  );
+}
+console.log(
+  "Verified demo binding target, private Commerce ingress, shared placeholder D1, and absence of local signing keys/Workflows. No deployed resources were checked."
+);

@@ -1,0 +1,54 @@
+{
+	"$schema": "../../node_modules/wrangler/config-schema.json",
+	"name": "customer-service-commerce",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-06-11",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"workers_dev": false,
+	"preview_urls": false,
+	"routes": [],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "commerce-local",
+			"database_id": "00000000-0000-0000-0000-000000000001"
+		}
+	],
+	"vars": {
+		"MCP_AUDIENCE": "commerce-mcp:local"
+	},
+	"secrets": {
+		"required": [
+			"MCP_CONTEXT_KEY"
+		]
+	},
+	"observability": {
+		"enabled": true
+	},
+	"env": {
+		"demo": {
+			"name": "customer-service-commerce-demo",
+			"workers_dev": false,
+			"preview_urls": false,
+			"routes": [],
+			// Deliberately unprovisioned: shared with the Application Worker's demo placeholder.
+			"d1_databases": [
+				{
+					"binding": "DB",
+					"database_name": "customer-service-demo",
+					"database_id": "882ea69f-71c1-484d-8e4e-48f6cc09c209"
+				}
+			],
+			"vars": {
+				"MCP_AUDIENCE": "commerce-mcp:demo"
+			},
+			"secrets": {
+				"required": [
+					"MCP_CONTEXT_KEY"
+				]
+			}
+		}
+	}
+}
