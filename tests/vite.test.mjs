@@ -129,8 +129,8 @@ test(
           socket.addEventListener("message", (event) => {
             frames += String(event.data);
             if (
-              frames.includes("session-authorized") &&
-              frames.includes("No commerce mutations")
+              frames.includes("get_customer_profile") &&
+              frames.includes("Shop request checked")
             ) {
               clearTimeout(timeout);
               resolve();

@@ -10,6 +10,8 @@ import {
   signContext
 } from "../shared/mcp-context";
 import { boundaryFailure } from "../src/boundary";
+import { callCommerce, connectCommerce } from "../src/commerce-client";
+import type { ToolName } from "../shared/commerce-contract";
 import { runSessionProbe } from "../src/commerce-client";
 export default {
   async fetch(request: Request, env: Env) {
@@ -22,10 +24,39 @@ export default {
       offset?: number;
       fail?: boolean;
       kind?: string;
+      name?: ToolName;
     };
     const clock = new Date(Date.now() + (body.offset ?? 0));
     try {
       const path = new URL(request.url).pathname;
+      if (path === "/tool")
+        return Response.json(
+          await callCommerce(
+            {
+              ...env,
+              session: {
+                db: env.DB,
+                tokenHash: body.hash,
+                ...(body.kind === "accept" ? { actionId: body.actionId } : {})
+              }
+            },
+            body.name!,
+            body.input
+          )
+        );
+      if (path === "/catalog") {
+        const client = await connectCommerce({
+          ...env,
+          session: { db: env.DB, tokenHash: body.hash }
+        });
+        try {
+          return Response.json(
+            (await client.listTools()).tools.map((t) => t.name)
+          );
+        } finally {
+          await client.close();
+        }
+      }
       if (path === "/propose")
         return Response.json(
           await createProposal(env.DB, body.hash, body.input, clock)

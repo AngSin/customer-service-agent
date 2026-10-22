@@ -16,7 +16,8 @@ import {
   sessionView,
   setCookie
 } from "../shared/session";
-import { decideApproval, listActions } from "../shared/consent";
+import { callCommerce, executeApprovedAction } from "./commerce-client";
+import { decideApproval, listActions, ownedAction } from "../shared/consent";
 
 export function boundaryResponse(
   value: unknown,
@@ -113,6 +114,16 @@ export async function boundaryApi(
         "Set-Cookie": setCookie(SESSION_COOKIE, result.token)
       });
     }
+    if (path === "/api/orders" && request.method === "GET") {
+      const session = await authenticate(request, env.DB);
+      return boundaryResponse(
+        await callCommerce(
+          { ...env, session: { db: env.DB, tokenHash: session.token_hash } },
+          "list_customer_orders",
+          { limit: 20 }
+        )
+      );
+    }
     if (path === "/api/actions" && request.method === "GET") {
       return boundaryResponse({
         actions: await listActions(env.DB, await authenticate(request, env.DB))
@@ -130,13 +141,31 @@ export async function boundaryApi(
           decision: z.enum(["approve", "reject"])
         })
         .parse(await jsonBody(request));
+      const action = await decideApproval(
+        env.DB,
+        session.token_hash,
+        match[1]!,
+        body.digest,
+        body.decision
+      );
+      return boundaryResponse({ action });
+    }
+    const executeMatch =
+      /^\/api\/actions\/([a-zA-Z0-9_-]{1,64})\/execute$/.exec(path);
+    if (executeMatch && request.method === "POST") {
+      requireCsrf(request);
+      const session = await authenticate(request, env.DB);
+      const body = z
+        .strictObject({ digest: z.string().regex(/^[a-f0-9]{64}$/) })
+        .parse(await jsonBody(request));
+      const action = await ownedAction(env.DB, session, executeMatch[1]!);
+      if (body.digest !== action.digest)
+        throw new BoundaryError("ACTION_CONFLICT", 409);
       return boundaryResponse({
-        action: await decideApproval(
-          env.DB,
+        result: await executeApprovedAction(
+          env,
           session.token_hash,
-          match[1]!,
-          body.digest,
-          body.decision
+          action.action_id
         )
       });
     }

@@ -123,7 +123,7 @@ export async function signSessionContext(
   scope: "session:read" | "action:accept" = "session:read",
   actionId?: string
 ) {
-  const session = await sessionByHash(db, hash, scope === "action:accept");
+  const session = await sessionByHash(db, hash);
   const now = Math.floor(Date.now() / 1000);
   const payload = encode(
     new TextEncoder().encode(
@@ -170,12 +170,12 @@ export async function verifySessionContext(
     .first<{ token_hash: string }>();
   if (!session || claims.sid !== claims.namespace_id)
     throw new Error("Invalid context");
-  await sessionByHash(db, session.token_hash, claims.scope === "action:accept");
+  await sessionByHash(db, session.token_hash);
   if (claims.scope === "action:accept") {
     if (!claims.action_id) throw new Error("Invalid context");
     const action = await db
       .prepare(
-        "SELECT a.action_id FROM mutation_actions a JOIN approvals p ON p.ns=a.ns AND p.action_id=a.action_id WHERE a.ns=? AND a.customer_id=? AND a.action_id=? AND a.approval_epoch=? AND p.approval_epoch=a.approval_epoch AND p.digest=a.digest AND p.approved_at IS NOT NULL AND p.consumed_at IS NULL AND p.revoked_at IS NULL AND p.rejected_at IS NULL AND p.expires_at>?"
+        "SELECT a.action_id FROM mutation_actions a JOIN approvals p ON p.ns=a.ns AND p.action_id=a.action_id WHERE a.ns=? AND a.customer_id=? AND a.action_id=? AND ((a.state IN ('accepted','completed') AND a.result_json IS NOT NULL) OR (a.approval_epoch=? AND p.approval_epoch=a.approval_epoch AND p.digest=a.digest AND p.approved_at IS NOT NULL AND p.consumed_at IS NULL AND p.revoked_at IS NULL AND p.rejected_at IS NULL AND p.expires_at>?))"
       )
       .bind(
         claims.namespace_id,

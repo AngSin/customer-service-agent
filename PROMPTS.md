@@ -478,3 +478,27 @@ ok, please deploy & run the migration
 ```text
 ok, please commit and push these changes
 ```
+
+## 35. User — explain Milestone 4 scope
+
+```text
+ok tell me about the scope of milestone 4
+```
+
+## 36. User — implement Milestone 4
+
+```text
+ok please implement milestone 4 and update PLAN.md and naturally PROMPTS.md, summarise the changes after you're done
+```
+
+## 37. User — deploy Milestone 4 without a database migration
+
+```text
+ok please deploy it, i see no new migration - so db remains the same
+```
+
+## 38. User — confirm Milestone 4, commit/push, and explain Milestone 5
+
+```text
+can confirmed it works, please commit & push this. now tell me about milestone 5, what is the scope?
+```

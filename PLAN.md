@@ -1,6 +1,6 @@
 # Customer service agent build plan
 
-Status: **Milestones 1–3 are implemented and deployed**; Milestones 4–6 remain planned. Milestone 3 adds immutable persona sessions, session-scoped MCP authorization, guarded chat routes, exact-action approval UI, and internal transactional acceptance. Its new migration and both demo Workers were deployed at the user’s request; see section 18 for live verification. Source changes and rollout records are included in the Milestone 3 and customer-name update commit. Historical implementation records describe their state at the time.
+Status: **Milestones 1–4 are implemented**. Milestones 1–4 and fixture v2/customer names are deployed; Milestone 4 source and rollout documentation are included in the commerce-tools implementation commit. Milestones 5–6 remain planned. See sections 18–20 for rollout status and verification. Historical implementation records describe their state at the time.
 
 ## 1. Objective and agreed scope
 
@@ -448,7 +448,7 @@ Use Local Explorer during implementation debugging to inspect local D1 rows/bind
 | 1. Platform compatibility and skeleton | Pin compatible Agents/chat/MCP/AI provider releases and lockfile; prove the SDK custom-fetch hook carries Streamable HTTP over `COMMERCE_MCP`, with no global fetch/public endpoint. Pass local auxiliary-Worker resolution/shared D1 checks, regenerated Fetcher types, signed/unsigned binding call tests, Llama tool-call smoke, and correct Vite demo binding/ingress artifact checks. No business action can execute yet. |
 | 2. Canonical data and fixtures — implemented | Apply three versioned migrations; validate constraints and six/twelve/three fixture counts. Seed twice safely; provision isolated namespaces. Local reset cannot target demo. |
 | 3. Identity and consent boundary — implemented | Immutable persona sessions, signed MCP context, gated DO routes, action cards/expiry/revocation, and transactional acceptance. Pass forged identity, cross-owner, direct-MCP, stale approval, and session-replacement race tests before enabling mutation execution. |
-| 4. Commerce tools and UI | Register exactly eight tools with strict input/output schemas; implement owned reads, approved cancellation/address/ticket writes, safe errors, and action replay. Show no-refund cancellation notice; saved profile unchanged. |
+| 4. Commerce tools and UI — implemented | Register exactly eight tools with strict input/output schemas; implement owned reads, approved cancellation/address/ticket writes, safe errors, and action replay. Show no-refund cancellation notice; saved profile unchanged. |
 | 5. Refund durability | Workflow, mock ledger, logical refunds/attempts, dispatch repair, failure reconciliation, and newly approved failed retries. Pass crash matrix and concurrent/replayed refund tests with one settlement per order. |
 | 6. Reviewer release | Wrangler configs/types, protected GitHub Actions path, explicit bootstrap, bounded usage, deterministic walkthroughs, complete tests and operational notes. Demo app binding resolves to the private `customer-service-commerce-demo`; app-origin signed MCP smoke succeeds, unsigned context fails in the internal harness, and public commerce ingress remains disabled. Re-deploy preserves commerce; accepted Workflow continues; reviewer can reproduce every scenario in a fresh session. |
 
@@ -613,3 +613,96 @@ Reviewers can now test welcome/persona selection, ordinary chat and explicit pri
 - Seed generation/bootstrap and provisioning now use v2; historical seed-v1.sql is retained. Migration includes the new catalog, so no reseed/reset is required.
 - Applied `0005_customer_names.sql` to remote `customer-service-demo` and deployed matching code on 2026-10-22. Commerce version: `86a3947c-f22e-466e-8380-0f7ea000b038`; application version: `c1e1ba39-b4b4-4f21-a066-3c5e659aefdc`.
 - Live verification confirmed all six customer names and customer address recipients, zero old order recipient names, sealed inactive v1 / sealed active v2, and no foreign-key violations. Live API checks verified all six labels, new Brad session provisioning, and refresh. No reset or additional seed was run.
+
+
+## 20. Milestone 4 implementation record — 2026-10-22
+
+Implemented the eight-tool commerce catalog and customer-facing approval execution flow.
+No new migration is required: existing commerce tables, mutation action `result_json`, and
+consent/audit schema support this milestone. No remote database, deployment, or Git push was
+performed during this implementation. User prompt 36 is appended chronologically to PROMPTS.md.
+
+### Delivered behavior
+
+- Authenticated sessions discover exactly `get_order`, `list_customer_orders`, `cancel_order`,
+  `refund_order`, `update_shipping_address`, `get_customer_profile`, `create_support_ticket`,
+  and `get_refund_status`. The legacy local test context retains only `milestone_ping`; it
+  cannot discover or execute business tools, and is rejected in demo.
+- Added shared strict input/output schemas and safe success/error envelopes; integer EUR
+  amounts, normalized synthetic PT addresses, bounded pagination and ticket text, and signed
+  namespace/customer-bound order cursors. Owned reads exclude internal keys, other customers,
+  and session credentials. Missing and foreign records return identical safe not-found errors.
+- Natural chat uses the business tools with a bounded five-step turn and explicit system
+  instructions to treat returned text as untrusted data, avoid invented results, preserve
+  identity, and require button consent. The fake model supports deterministic local test
+  phrases; real Workers AI remains the deployed model choice.
+- Model write requests create immutable five-minute proposals; identical live proposals are
+  reused. Chat “yes” cannot approve. Cards record `/decision`, then call the CSRF/Origin-protected
+  `/execute` route with the exact action/digest. Trusted stored arguments travel through private
+  MCP with action-scoped signed context; Commerce rechecks all guards independently.
+- Approved cancellation updates fulfillment/version only, persists a no-refund notice, and
+  leaves payment/refund history untouched. Address writes affect only an eligible order and
+  leave the saved customer profile unchanged. Tickets require approval of their full text,
+  owned optional order, and a maximum of 20 new tickets per session.
+- Approval consumption, guarded business effects, completed action/result, and audit persist in
+  one D1 transaction. Late failures roll back consumption and effects. Duplicate/concurrent
+  executions return the same stored result, including ticket ID. Stale, rejected, revoked,
+  altered, and expired consent cannot execute. Completed owned replays remain readable under
+  a valid replaced session credential without rerunning effects.
+- The UI renders validated tool results as escaped text, addresses, order summaries/items,
+  tracking, and refund status. Completed cards retain business outcomes after refresh. A
+  **Current orders** panel rehydrates canonical owned data through private MCP on mount,
+  action-state changes, and explicit refresh; historical chat results are labelled snapshots.
+- Read/denial audit records use safe codes; completion records correlate request/action/customer/
+  order and versions without storing addresses or ticket bodies in audit fields.
+
+### Milestone 5 boundary
+
+`refund_order` returns status-only for pending/completed refunds. Eligible new requests and
+confirmed-failed retries return `FEATURE_UNAVAILABLE` with an explicit message; ineligible
+requests remain `NOT_ELIGIBLE`. This adds no refund proposal/acceptance, attempt, processor
+operation, dispatch, or Workflow. `get_refund_status` is read-only. Durable refund execution,
+unknown-outcome reconciliation, and newly approved retries remain Milestone 5 work.
+
+### Verification
+
+- Automated real-Worker/D1/MCP integration tests cover the exact catalog, owned reads and
+  profile, pagination tampering and cross-session cursors, strict malformed inputs, cancellation
+  payment preservation, exact normalized address consent/profile preservation, ticket replay,
+  competing order actions, refund status-only/unavailable behavior, execution CSRF/ownership/
+  digest/expiry/rejection/revocation, post-replacement completed replay, and current-order refresh.
+- WebSocket tests exercise natural previous-order lookup, cancellation proposals, and chat
+  “yes” leaving approval and fulfillment unchanged, alongside existing forged-frame/history,
+  identity/session, and rollback/race tests.
+- Manual local browser verification: natural order lookup, cancellation card, Approve triggering
+  execution, explicit no-refund result, persisted completed card after refresh, and canonical
+  current-order state showing cancelled/paid. Screenshot: `.wrangler/milestone4-cancellation.png`.
+- Real Workers AI over local Vite/private MCP: “Tell me the details of all the orders I placed
+  previously” returned owned order data; a natural cancellation request created a pending
+  proposal, explicit approval executed once, and refreshed canonical state was cancelled/paid.
+  Only local synthetic commerce records changed; no remote demo records were mutated.
+
+Final checks: **53 automated tests passed**, plus formatting/lint/type checks, fixture SQL
+verification, local/demo generated-type verification, demo build, and deployment-artifact
+checks. Independent security and TypeScript reviews found no remaining blockers after
+adding specific approval preflight errors and guarding current-order refreshes against
+out-of-order responses. No new dependencies or bindings were added.
+
+
+## 21. Milestone 4 demo rollout — 2026-10-23
+
+- Deployed the private Commerce Worker first, followed by the application, using `npm run deploy`.
+- Commerce version: `28da25e4-e118-43cc-8fbe-805077e9b586`.
+- Application version: `56096943-b587-4d65-88d2-972d6c44be4b`.
+- Demo: https://customer-service-agent-demo.customer-service-lisbon.workers.dev
+- No migration, seed, or reset was run. Read-only verification confirmed the same five applied
+  migrations (0001–0005), sealed/inactive v1 and sealed/active v2 catalogs, and no foreign-key
+  violations. Database schema remains unchanged; approved business actions now update its
+  existing tables.
+- Live Workers AI natural-language order lookup returned owned order details through private
+  MCP. A natural cancellation request produced a pending proposal; explicit approval followed
+  by execution persisted cancellation while payment remained paid. The current-orders read
+  reflected the new state. Verification used a freshly issued synthetic test namespace and
+  did not mutate existing reviewer sessions.
+- Build and deployment artifact checks passed. Refund execution remains unavailable until
+  Milestone 5. Prompts 37–38 are recorded in PROMPTS.md. The user confirmed the live behavior and requested committing/pushing the implementation and rollout documentation.

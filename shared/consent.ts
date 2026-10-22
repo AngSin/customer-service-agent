@@ -2,16 +2,7 @@ import { z } from "zod";
 import { assertion, executeBatch, sha256, type Statement } from "./fixtures";
 import { BoundaryError, sessionByHash, type Session } from "./session";
 
-const id = z.string().regex(/^[a-zA-Z0-9_-]{1,64}$/);
-const address = z.strictObject({
-  recipient: z.string().trim().min(1).max(80),
-  line1: z.string().trim().min(1).max(120),
-  line2: z.string().trim().max(120).optional(),
-  city: z.string().trim().min(1).max(80),
-  region: z.string().trim().max(80).optional(),
-  postal_code: z.string().trim().min(1).max(20),
-  country: z.literal("PT")
-});
+import { idSchema as id, addressSchema as address } from "./commerce-contract";
 const orderArgs = z.strictObject({ order_id: id });
 export const proposalSchema = z.discriminatedUnion("tool", [
   z.strictObject({ tool: z.literal("cancel_order"), arguments: orderArgs }),
@@ -88,6 +79,9 @@ export function actionView(action: Action) {
     tool: action.tool,
     payload: JSON.parse(action.arguments_json) as unknown,
     state: action.state,
+    result: action.result_json
+      ? (JSON.parse(action.result_json) as unknown)
+      : null,
     expiresAt: action.expires_at,
     decision: action.revoked_at
       ? "revoked"
@@ -201,6 +195,13 @@ async function propose(
   };
   const text = canonical(payload);
   const digest = await sha256(text);
+  const existing = await db
+    .prepare(
+      `${actionSelect} WHERE a.ns=? AND a.customer_id=? AND a.digest=? AND a.state='proposed' AND p.rejected_at IS NULL AND p.revoked_at IS NULL AND p.expires_at>?`
+    )
+    .bind(session.ns, session.customer_id, digest, clock.toISOString())
+    .first<Action>();
+  if (existing) return actionView(existing);
   const actionId = crypto.randomUUID();
   const approvalId = crypto.randomUUID();
   const now = clock.toISOString();
@@ -381,7 +382,7 @@ async function accept(
   return { actionId, replayed: false };
 }
 
-async function denial(
+export async function recordDenial(
   db: D1Database,
   hash: string,
   event: string,
@@ -410,7 +411,7 @@ export async function createProposal(
   try {
     return await propose(db, hash, input, clock);
   } catch (error) {
-    await denial(db, hash, "proposal_denied", error);
+    await recordDenial(db, hash, "proposal_denied", error);
     throw error;
   }
 }
@@ -425,7 +426,7 @@ export async function decideApproval(
   try {
     return await decide(db, hash, actionId, digest, decision, clock);
   } catch (error) {
-    await denial(db, hash, "approval_denied", error);
+    await recordDenial(db, hash, "approval_denied", error);
     throw error;
   }
 }
@@ -440,7 +441,7 @@ export async function acceptAction(
   try {
     return await accept(db, hash, actionId, digest, effects, clock);
   } catch (error) {
-    await denial(db, hash, "acceptance_denied", error);
+    await recordDenial(db, hash, "acceptance_denied", error);
     throw error;
   }
 }

@@ -304,7 +304,7 @@ test("MCP rechecks D1 identity, rejects validly signed foreign claims, expired/t
         actionId: a.actionId
       })
     ).status,
-    403
+    401
   );
 });
 
@@ -631,7 +631,10 @@ test("identity-switch denial settles the SDK turn and the same socket can comple
           ])
         )
     );
-    assert.ok(JSON.stringify(normal).includes("session-authorized"));
+    assert.ok(
+      JSON.stringify(normal).includes("get_customer_profile") &&
+        JSON.stringify(normal).includes("Ada")
+    );
     const history = await request(
       `/agents/chat-agent/${u.session.chatName}/get-messages`,
       u.jar
@@ -754,5 +757,512 @@ test("competing replacement keys create exactly one successor", async () => {
       )
     )[0].n,
     1
+  );
+});
+
+// Milestone 4: all calls use the real private service-binding MCP transport.
+async function shop(u, name, input = {}, actionId) {
+  const response = await internal("/tool", {
+    hash: u.hash,
+    name,
+    input,
+    ...(actionId ? { actionId, kind: "accept" } : {})
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  return response.json();
+}
+async function proposedByTool(u, name, input) {
+  const result = await shop(u, name, input);
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, "APPROVAL_REQUIRED");
+  return result.proposal;
+}
+const executeFromBrowser = (u, a, extra = {}) =>
+  request(
+    `/api/actions/${a.actionId}/execute`,
+    u.jar,
+    { digest: a.digest, ...extra },
+    { "X-CSRF-Token": u.csrfToken }
+  );
+async function approvedExecute(u, a) {
+  assert.equal((await decide(u, a)).status, 200);
+  const response = await executeFromBrowser(u, a);
+  assert.equal(response.status, 200, await response.clone().text());
+  return (await response.json()).result;
+}
+
+test("commerce catalog exposes exactly eight business tools and owned read results", async () => {
+  const u = await user();
+  const catalog = await internal("/catalog", { hash: u.hash });
+  assert.deepEqual(
+    (await catalog.json()).sort(),
+    [
+      "get_order",
+      "list_customer_orders",
+      "cancel_order",
+      "refund_order",
+      "update_shipping_address",
+      "get_customer_profile",
+      "create_support_ticket",
+      "get_refund_status"
+    ].sort()
+  );
+  const profile = await shop(u, "get_customer_profile");
+  assert.equal(profile.data.customer.display_name, "Ada");
+  assert.equal(profile.data.customer.saved_shipping_address.recipient, "Ada");
+  const list = await shop(u, "list_customer_orders");
+  assert.deepEqual(
+    list.data.orders.map((o) => o.order_id),
+    ["ord_101", "ord_102"]
+  );
+  const detail = await shop(u, "get_order", { order_id: "ord_102" });
+  assert.equal(detail.data.order.items.length, 1);
+  assert.equal(detail.data.order.tracking.tracking_id, "TEST-TRACK-102");
+  assert.equal(detail.data.order.total_minor, 7300);
+  const foreign = await shop(u, "get_order", { order_id: "ord_201" });
+  const missing = await shop(u, "get_order", { order_id: "ord_missing" });
+  assert.deepEqual(foreign.error, missing.error);
+  assert.equal(foreign.error.code, "NOT_FOUND");
+  assert.ok(!JSON.stringify(detail).includes("token_hash"));
+  assert.ok(!JSON.stringify(detail).includes("attempt_key"));
+});
+
+test("order pagination signs the current namespace/customer and rejects tampering", async () => {
+  const a = await user(),
+    b = await user("bram");
+  const first = await shop(a, "list_customer_orders", { limit: 1 });
+  assert.equal(first.data.orders[0].order_id, "ord_101");
+  const second = await shop(a, "list_customer_orders", {
+    limit: 1,
+    cursor: first.data.next_cursor
+  });
+  assert.equal(second.data.orders[0].order_id, "ord_102");
+  assert.equal(second.data.next_cursor, null);
+  assert.equal(
+    (await shop(b, "list_customer_orders", { cursor: first.data.next_cursor }))
+      .error.code,
+    "INVALID_ARGUMENT"
+  );
+  assert.equal(
+    (
+      await shop(a, "list_customer_orders", {
+        cursor: first.data.next_cursor + "x"
+      })
+    ).error.code,
+    "INVALID_ARGUMENT"
+  );
+});
+
+test("approved cancellation completes once, persists the result, and never refunds payment", async () => {
+  const u = await user();
+  const p = await proposedByTool(u, "cancel_order", { order_id: "ord_101" });
+  assert.equal(
+    (
+      await rows(
+        "SELECT fulfillment_status FROM orders WHERE ns=? AND order_id=?",
+        u.session.chatName,
+        "ord_101"
+      )
+    )[0].fulfillment_status,
+    "unshipped"
+  );
+  assert.notEqual((await executeFromBrowser(u, p)).status, 200);
+  const result = await approvedExecute(u, p);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.data.payment_unchanged, true);
+  assert.equal(result.data.order.payment_status, "paid");
+  assert.equal(
+    result.data.notice,
+    "Order cancelled; payment has not been refunded."
+  );
+  const replay = await executeFromBrowser(u, p);
+  assert.equal((await replay.json()).result.data.replayed, true);
+  assert.equal(
+    (
+      await rows(
+        "SELECT version FROM orders WHERE ns=? AND order_id=?",
+        u.session.chatName,
+        "ord_101"
+      )
+    )[0].version,
+    2
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM refunds WHERE ns=?",
+        u.session.chatName
+      )
+    )[0].n,
+    3
+  );
+  const action = (
+    await rows(
+      "SELECT state,result_json FROM mutation_actions WHERE ns=? AND action_id=?",
+      u.session.chatName,
+      p.actionId
+    )
+  )[0];
+  assert.equal(action.state, "completed");
+  assert.equal(
+    JSON.parse(action.result_json).order.fulfillment_status,
+    "cancelled"
+  );
+  assert.equal(
+    (await shop(u, "cancel_order", { order_id: "ord_101" })).error.code,
+    "NOT_ELIGIBLE"
+  );
+});
+
+test("address approval uses normalized exact fields and leaves the saved profile unchanged", async () => {
+  const u = await user("bram");
+  const before = await shop(u, "get_customer_profile");
+  const address = {
+    recipient: " Brad ",
+    line1: " 123 New Road ",
+    city: "Lisbon",
+    postal_code: "1000-001",
+    country: "PT"
+  };
+  const p = await proposedByTool(u, "update_shipping_address", {
+    order_id: "ord_201",
+    address
+  });
+  assert.equal(p.payload.arguments.address.recipient, "Brad");
+  await decide(u, p);
+  assert.equal(
+    (
+      await shop(
+        u,
+        "update_shipping_address",
+        { order_id: "ord_201", address: { ...address, line1: "Other Road" } },
+        p.actionId
+      )
+    ).error?.code,
+    "ACTION_CONFLICT"
+  );
+  const result = await approvedExecute(u, p);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.equal(result.data.profile_address_unchanged, true);
+  assert.equal(result.data.shipping_address.line1, "123 New Road");
+  assert.deepEqual((await shop(u, "get_customer_profile")).data, before.data);
+  assert.equal(
+    (await shop(u, "get_order", { order_id: "ord_201" })).data.order
+      .shipping_address.line1,
+    "123 New Road"
+  );
+});
+
+test("ticket writes require exact consent and concurrent replays return one stored ticket", async () => {
+  const u = await user();
+  const args = {
+    order_id: "ord_102",
+    category: "delivery",
+    subject: "Where is my parcel?",
+    body: "Please check my delayed delivery."
+  };
+  const p = await proposedByTool(u, "create_support_ticket", args);
+  await decide(u, p);
+  const responses = await Promise.all([
+    executeFromBrowser(u, p),
+    executeFromBrowser(u, p)
+  ]);
+  const results = await Promise.all(responses.map((r) => r.json()));
+  assert.ok(
+    results.every((r) => r.result.ok),
+    JSON.stringify(results)
+  );
+  assert.equal(
+    results[0].result.data.ticket.ticket_id,
+    results[1].result.data.ticket.ticket_id
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM support_tickets WHERE ns=? AND action_id=?",
+        u.session.chatName,
+        p.actionId
+      )
+    )[0].n,
+    1
+  );
+  assert.equal(
+    (await shop(u, "create_support_ticket", { ...args, order_id: "ord_201" }))
+      .error.code,
+    "NOT_FOUND"
+  );
+  const p2 = await proposedByTool(u, "create_support_ticket", {
+    category: "other",
+    subject: "General help",
+    body: "Please help with my account."
+  });
+  assert.equal((await approvedExecute(u, p2)).data.ticket.order_id, null);
+});
+
+test("stale and competing order actions cannot both apply", async () => {
+  const u = await user();
+  const cancel = await proposedByTool(u, "cancel_order", {
+    order_id: "ord_101"
+  });
+  const address = await proposedByTool(u, "update_shipping_address", {
+    order_id: "ord_101",
+    address: {
+      recipient: "Ada",
+      line1: "New Road",
+      city: "Lisbon",
+      postal_code: "1000-001",
+      country: "PT"
+    }
+  });
+  await decide(u, cancel);
+  await decide(u, address);
+  const responses = await Promise.all([
+    executeFromBrowser(u, cancel),
+    executeFromBrowser(u, address)
+  ]);
+  const results = await Promise.all(responses.map((r) => r.json()));
+  assert.equal(
+    results.filter((r) => r.result?.ok).length,
+    1,
+    JSON.stringify(results)
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT version FROM orders WHERE ns=? AND order_id=?",
+        u.session.chatName,
+        "ord_101"
+      )
+    )[0].version,
+    2
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM approvals WHERE ns=? AND consumed_at IS NOT NULL",
+        u.session.chatName
+      )
+    )[0].n,
+    1
+  );
+});
+
+test("refund tools read existing status without starting or retrying money movement", async () => {
+  const brad = await user("bram"),
+    cora = await user("cora"),
+    ada = await user();
+  const pending = await shop(brad, "refund_order", { order_id: "ord_202" });
+  assert.equal(pending.data.disposition, "status_only");
+  assert.equal(pending.data.refund.status, "pending");
+  assert.equal(
+    (await shop(cora, "refund_order", { order_id: "ord_301" })).data.refund
+      .status,
+    "completed"
+  );
+  assert.equal(
+    (await shop(cora, "refund_order", { order_id: "ord_302" })).error.code,
+    "FEATURE_UNAVAILABLE"
+  );
+  assert.equal(
+    (await shop(ada, "refund_order", { order_id: "ord_102" })).error.code,
+    "FEATURE_UNAVAILABLE"
+  );
+  assert.equal(
+    (await shop(ada, "refund_order", { order_id: "ord_101" })).error.code,
+    "NOT_ELIGIBLE"
+  );
+  assert.equal(
+    (await shop(ada, "get_refund_status", { refund_id: "ref_202" })).error.code,
+    "NOT_FOUND"
+  );
+  const status = await shop(brad, "get_refund_status", {
+    refund_id: "ref_202"
+  });
+  assert.equal(status.data.refund.outcome, "unknown");
+  assert.ok(!JSON.stringify(status).includes("attempt_key"));
+  for (const u of [brad, cora, ada]) {
+    assert.equal(
+      (
+        await rows(
+          "SELECT count(*) AS n FROM refund_attempts WHERE ns=?",
+          u.session.chatName
+        )
+      )[0].n,
+      3
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT count(*) AS n FROM mutation_actions WHERE ns=?",
+          u.session.chatName
+        )
+      )[0].n,
+      0
+    );
+  }
+});
+
+test("execution route enforces CSRF, ownership, digest, revocation, and replay after replacement", async () => {
+  const a = await user(),
+    b = await user("bram");
+  const p = await proposedByTool(a, "cancel_order", { order_id: "ord_101" });
+  assert.equal((await executeFromBrowser(b, p)).status, 404);
+  assert.equal(
+    (
+      await request(`/api/actions/${p.actionId}/execute`, a.jar, {
+        digest: p.digest
+      })
+    ).status,
+    403
+  );
+  assert.equal(
+    (await executeFromBrowser(a, p, { digest: "0".repeat(64) })).status,
+    409
+  );
+  await approvedExecute(a, p);
+  const pending = await proposedByTool(a, "create_support_ticket", {
+    category: "other",
+    subject: "Help",
+    body: "Please help."
+  });
+  await decide(a, pending);
+  await replacement(a);
+  assert.notEqual((await executeFromBrowser(a, pending)).status, 200);
+  const replay = await executeFromBrowser(a, p);
+  assert.equal(replay.status, 200, await replay.clone().text());
+  assert.equal((await replay.json()).result.data.replayed, true);
+});
+
+test("natural chat lists orders and proposes cancellation, while chat yes grants no consent", async () => {
+  const u = await user();
+  const response = await app.fetch(
+    `${origin}/agents/chat-agent/${u.session.chatName}`,
+    { headers: { Upgrade: "websocket", Origin: origin, Cookie: u.jar } }
+  );
+  const socket = response.webSocket;
+  socket.accept();
+  const turn = async (id, text) =>
+    waitFrames(
+      socket,
+      (frames) => frames.some((f) => f.id === id && f.done),
+      () => socket.send(frame(id, text))
+    );
+  try {
+    const listed = await turn("list", "Tell me about all my previous orders");
+    assert.ok(JSON.stringify(listed).includes("list_customer_orders"));
+    assert.ok(JSON.stringify(listed).includes("ord_101"));
+    assert.ok(!JSON.stringify(listed).includes("ord_201"));
+    const proposed = await turn("cancel", "Please cancel ord_101");
+    assert.ok(JSON.stringify(proposed).includes("APPROVAL_REQUIRED"));
+    await turn("yes", "yes");
+    assert.equal(
+      (
+        await rows(
+          "SELECT count(*) AS n FROM approvals WHERE ns=? AND approved_at IS NOT NULL",
+          u.session.chatName
+        )
+      )[0].n,
+      0
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT fulfillment_status FROM orders WHERE ns=? AND order_id=?",
+          u.session.chatName,
+          "ord_101"
+        )
+      )[0].fulfillment_status,
+      "unshipped"
+    );
+  } finally {
+    socket.close();
+  }
+});
+
+test("browser execution reports rejected and expired consent safely without writes", async () => {
+  const u = await user();
+  const rejected = await proposedByTool(u, "cancel_order", {
+    order_id: "ord_101"
+  });
+  await decide(u, rejected, "reject");
+  const denied = await executeFromBrowser(u, rejected);
+  assert.equal((await denied.json()).error.code, "APPROVAL_REQUIRED");
+  const expired = await proposal(
+    u,
+    "cancel_order",
+    { order_id: "ord_101" },
+    -301000
+  );
+  const timedOut = await executeFromBrowser(u, expired);
+  assert.equal((await timedOut.json()).error.code, "APPROVAL_EXPIRED");
+  assert.equal(
+    (
+      await rows(
+        "SELECT version FROM orders WHERE ns=? AND order_id=?",
+        u.session.chatName,
+        "ord_101"
+      )
+    )[0].version,
+    1
+  );
+});
+
+test("strict commerce schemas reject identity injection, extra fields and malformed writes", async () => {
+  const u = await user();
+  for (const [name, input] of [
+    ["get_customer_profile", { customer_id: "cus_bram" }],
+    ["list_customer_orders", { limit: 21 }],
+    ["get_order", { order_id: "' OR 1=1" }],
+    ["cancel_order", { order_id: "ord_101", approved: true }],
+    ["refund_order", { order_id: "ord_102", amount_minor: 1 }],
+    [
+      "update_shipping_address",
+      { order_id: "ord_101", address: { recipient: "Ada" } }
+    ],
+    [
+      "create_support_ticket",
+      { category: "other", subject: "Help", body: "x".repeat(2001) }
+    ],
+    ["get_refund_status", { refund_id: "ref_202", namespace_id: "other" }]
+  ]) {
+    const result = await shop(u, name, input);
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.error.code, "INVALID_ARGUMENT");
+  }
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM mutation_actions WHERE ns=?",
+        u.session.chatName
+      )
+    )[0].n,
+    0
+  );
+});
+
+test("current orders refresh rehydrates owned canonical status and remains session scoped", async () => {
+  const u = await user(),
+    other = await user("bram");
+  assert.equal((await request("/api/orders")).status, 401);
+  const before = await request("/api/orders", u.jar);
+  assert.deepEqual(
+    (await before.json()).data.orders.map((o) => o.order_id),
+    ["ord_101", "ord_102"]
+  );
+  const p = await proposedByTool(u, "cancel_order", { order_id: "ord_101" });
+  const repeat = await proposedByTool(u, "cancel_order", {
+    order_id: "ord_101"
+  });
+  assert.equal(repeat.actionId, p.actionId);
+  await approvedExecute(u, p);
+  const after = await request("/api/orders", u.jar);
+  assert.equal(
+    (await after.json()).data.orders[0].fulfillment_status,
+    "cancelled"
+  );
+  const foreign = await request("/api/orders", other.jar);
+  assert.deepEqual(
+    (await foreign.json()).data.orders.map((o) => o.order_id),
+    ["ord_201", "ord_202"]
   );
 });

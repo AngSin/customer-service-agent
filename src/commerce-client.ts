@@ -1,4 +1,12 @@
 import {
+  outputSchema,
+  type CommerceResult,
+  type ToolName
+} from "../shared/commerce-contract";
+import { BoundaryError } from "../shared/session";
+import { ownedAction, recordDenial } from "../shared/consent";
+import { sessionByHash } from "../shared/session";
+import {
   Client,
   StreamableHTTPClientTransport,
   type FetchLike
@@ -14,7 +22,7 @@ import { probeSchema, readProbeMarker } from "../shared/probe";
 
 export interface CommerceConnection extends ContextConfig {
   COMMERCE_MCP: Pick<Fetcher, "fetch">;
-  session?: { db: D1Database; tokenHash: string };
+  session?: { db: D1Database; tokenHash: string; actionId?: string };
 }
 
 export function bindingFetch(env: CommerceConnection): FetchLike {
@@ -27,7 +35,7 @@ export function bindingFetch(env: CommerceConnection): FetchLike {
     headers.set("Host", new URL(MCP_URL).host);
     headers.set(
       "Authorization",
-      `Bearer ${env.session ? await signSessionContext(env, env.session.db, env.session.tokenHash) : await signContext(env)}`
+      `Bearer ${env.session ? await signSessionContext(env, env.session.db, env.session.tokenHash, env.session.actionId ? "action:accept" : "session:read", env.session.actionId) : await signContext(env)}`
     );
     const response = await env.COMMERCE_MCP.fetch(
       new Request(request, { headers, redirect: "manual" })
@@ -42,16 +50,67 @@ export function bindingFetch(env: CommerceConnection): FetchLike {
 
 export async function runSessionProbe(env: CommerceConnection) {
   if (!env.session) throw new Error("Session required");
+  const result = await callCommerce(env, "get_customer_profile", {});
+  if (!result.ok) throw new Error("Session probe failed");
+  return {
+    marker: "session-authorized",
+    subject: "milestone-1-probe" as const
+  };
+}
+
+export async function callCommerce(
+  env: CommerceConnection,
+  name: ToolName,
+  args: unknown
+): Promise<CommerceResult> {
   const client = await connectCommerce(env);
   try {
     const result = await client.callTool({
-      name: "milestone_ping",
-      arguments: {}
+      name,
+      arguments: args as Record<string, unknown>
     });
-    if (result.isError) throw new Error("Session probe failed");
-    return probeSchema.parse(result.structuredContent);
+    if (result.isError && !result.structuredContent) {
+      return {
+        ok: false,
+        error: {
+          code: "INVALID_ARGUMENT",
+          message: "The supplied fields are invalid.",
+          retryable: false
+        },
+        request_id: crypto.randomUUID()
+      };
+    }
+    return outputSchema(name).parse(result.structuredContent) as CommerceResult;
   } finally {
     await client.close();
+  }
+}
+
+export async function executeApprovedAction(
+  env: Env,
+  hash: string,
+  actionId: string
+) {
+  try {
+    const session = await sessionByHash(env.DB, hash);
+    const action = await ownedAction(env.DB, session, actionId);
+    if (!["accepted", "completed"].includes(action.state)) {
+      if (!session.mutation_enabled) throw new BoundaryError("SESSION_REVOKED");
+      if (action.revoked_at) throw new BoundaryError("APPROVAL_REVOKED");
+      if (action.expires_at <= new Date().toISOString())
+        throw new BoundaryError("APPROVAL_EXPIRED", 409);
+      if (!action.approved_at || action.rejected_at || action.consumed_at)
+        throw new BoundaryError("APPROVAL_REQUIRED", 409);
+    }
+    const payload = JSON.parse(action.arguments_json) as { arguments: unknown };
+    return callCommerce(
+      { ...env, session: { db: env.DB, tokenHash: hash, actionId } },
+      action.tool as ToolName,
+      payload.arguments
+    );
+  } catch (error) {
+    await recordDenial(env.DB, hash, "execution_denied", error);
+    throw error;
   }
 }
 

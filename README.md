@@ -1,28 +1,50 @@
-# Customer service agent — Milestones 1–3
+# Customer service agent — Milestones 1–4
 
-This checkout implements the platform, canonical data, and identity/consent milestones from [PLAN.md](PLAN.md).
-It includes isolated persona sessions, authenticated chat, and exact-action approval cards.
-The eight commerce business tools, business execution endpoints, and refund Workflows remain later work.
-Milestone 3 is deployed at [the demo](https://customer-service-agent-demo.customer-service-lisbon.workers.dev).
-See `PLAN.md` section 18 for rollout and live verification.
+This checkout implements the platform, canonical data, identity/consent, and commerce-tool
+milestones from [PLAN.md](PLAN.md). Milestone 4 adds owned order/profile/refund reads and
+approved cancellation, shipping-address, and support-ticket writes. Refund execution and
+retries remain Milestone 5 work.
+
+The [deployed demo](https://customer-service-agent-demo.customer-service-lisbon.workers.dev)
+now runs Milestone 4 with the existing customer-name migration and fixture v2.
+See `PLAN.md` sections 18–21 for rollout status and implementation evidence.
 
 The React/Kumo application and SQLite-backed `ChatAgent` come from Cloudflare's Agents starter.
-The Commerce Worker exposes one read-only `milestone_ping` MCP tool. A request-scoped MCP
-client uses Streamable HTTP with a custom fetch callback backed exclusively by
-`env.COMMERCE_MCP.fetch()`. There is no public-network fallback.
+The private Commerce Worker exposes eight business MCP tools to authenticated sessions.
+A request-scoped client uses Streamable HTTP exclusively through `env.COMMERCE_MCP.fetch()`;
+there is no public-network fallback. The legacy `milestone_ping` tool remains available
+only to the separate local transport-test context, not the session business catalog.
 
-## Try the deployed demo
+## Try Milestone 4 locally
 
-1. Choose **Ada**, click **Start session**, and send a message. Ask “Call milestone_ping to verify the private connection” to exercise the real Workers AI/private MCP path.
-2. Refresh: the same persona and saved chat should return.
-3. Ask “Become Brad”: identity stays Ada and the UI directs you to Start new session.
-4. Select **Brad**: the current customer stays Ada until you click **Start new session**. After clicking, Brad has a fresh chat without the previous history or approval cards.
-5. Use a separate browser/private window for independent sessions and chat histories.
+After the setup below, choose **Ada** and click **Start session**. Natural-language examples:
 
-Order lookup, cancellation, refunds, address changes, and support-ticket creation are not
-available yet. Approval cards are implemented, but normal chat cannot generate business
-proposals until the Milestone 4 adapters exist. Internal tests cover approval expiry,
-revocation, and transactional acceptance; no business effect is executable publicly.
+1. “Tell me the details of all the orders I placed previously.” Ada owns `ord_101` and `ord_102`.
+2. “What do you know about order ord_102?” Inspect items, shipping address and tracking.
+3. “What address do you have saved for me?” The profile uses the current session identity.
+4. “Cancel ord_101.” Inspect the action card and click **Approve** or **Reject**. Typing “yes”
+   does not approve. After approval, fulfillment is cancelled while payment stays paid;
+   the card explicitly says payment has not been refunded.
+5. In a fresh session, ask “Change ord_101's shipping address to recipient Ada, 123 New Road,
+   Lisbon, postal code 1000-001, country PT.” Approve the exact normalized address.
+   The order changes; the saved customer profile address stays unchanged.
+6. “Create a delivery support ticket for ord_102. Subject: Where is my parcel? Body: Please
+   check my delayed delivery.” Approve the complete text; duplicate execution retries
+   return the same ticket.
+7. Start a **Brad** session and ask “What is the refund status for ref_202?” It is pending.
+   **Cora** has completed `ref_301` and failed `ref_302`. Reads never start or restart work.
+
+The **Current orders** panel loads canonical data from private MCP when the chat mounts,
+when proposal/completion state changes, or when **Refresh orders** is clicked. Historical
+chat tool results are labelled “when checked”; completed approval cards retain their saved
+result after refresh. If a response is lost after approving, use **Retry approved action**;
+the same action ID cannot apply its effects twice. Unaccepted approvals expire after five
+minutes and are revoked by **Start new session**. Use a private browser window for an
+independent session; chat cannot change customer identity.
+
+New refunds and failed-refund retries return a clear unavailable message (`FEATURE_UNAVAILABLE`)
+and create no approval, attempt, ledger entry, dispatch, or Workflow. Pending/completed refunds
+return existing status. No real payments, emails, or external ticket system are involved.
 
 ## Run locally
 
@@ -38,7 +60,9 @@ npm run dev
 ```
 
 Open the Vite URL, choose a fictional customer, and click **Start session** before sending a message.
-The fake AI SDK model calls the private MCP tool under the session identity, then streams a fixed response. Alternatively, `GET /api/milestone/probe` on the local app
+The fake AI SDK model routes a small set of test phrases (previous orders, explicit order IDs,
+cancellation, and profile/connection checks) to real private MCP tools, then streams a fixed
+response. It is a test fixture, not a full natural-language model. Alternatively, `GET /api/milestone/probe` on the local app
 returns the marker read independently through both Workers' D1 bindings.
 
 Vite starts Commerce as an auxiliary Worker. It has no separate public listener.
@@ -133,16 +157,16 @@ retries after the successor cookie was installed.
 `0004_session_boundary.sql` adds the replacement lineage table and prevents inserting
 an approval with fabricated pre-approved/consumed timestamps. Run `npm run db:migrate`
 when upgrading an existing local checkout. It appends to the existing migrations and
-does not reset data. Before a future Milestone 3 deployment, explicitly apply
-`npm run db:migrate:demo`, then deploy; the new routes require this schema. No remote
-migration or deployment was performed during implementation; both were subsequently
-completed at the user’s request (see `PLAN.md` section 18).
+does not reset data. This migration and the customer-name migration are already applied
+to the demo (see `PLAN.md` sections 18–19). Milestone 4 uses the same schema.
 
 | Endpoint                         | Purpose                                                                                              |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------- |
 | `GET /api/session`               | Returns the current safe session view, persona choices, and CSRF token; establishes the CSRF cookie. |
 | `POST /api/sessions`             | Issues a fresh session when there is no active one. Accepts only the allowlisted persona.            |
 | `POST /api/sessions/replace`     | Replaces an authenticated session using a persona hint and UUID request key.                         |
+| `GET /api/orders`                | Rehydrates the current customer’s first 20 orders through private MCP.                               |
+| `POST /api/actions/:id/execute`  | Executes or replays the exact approved stored action through private MCP.                            |
 | `GET /api/actions`               | Lists proposals/decisions owned by the authenticated persona and namespace.                          |
 | `POST /api/actions/:id/decision` | Records Approve/Reject for the exact proposal digest.                                                |
 
@@ -155,14 +179,14 @@ bypass these checks. Browser-supplied chat history cannot overwrite server histo
 The trusted `createProposal` helper validates owned targets, eligibility, normalized
 arguments, canonical amount/versions, and the session epoch. Proposals expire after five
 minutes. Cards show the exact action and consequences; a chat “yes” does not approve.
-Approving records consent only. `acceptAction` is an internal helper for later Commerce
-executors: it rechecks ownership/versions/consent, consumes once, and records acceptance
-with any trusted effects in the same guarded D1 batch. It has no public route. Future
-executors must include business effects, stored results, and outbox writes in that batch.
+The decision endpoint records consent only; the browser then calls the execution endpoint.
+`acceptAction` rechecks ownership/versions/consent, consumes once, and records acceptance
+with trusted business effects and stored results in the same guarded D1 batch. The helper
+itself is internal. Refund outbox effects remain future Milestone 5 work.
 
-There is no browser/model proposal-creation endpoint or executable commerce tool yet.
-Cards appear when a trusted adapter creates a proposal; internal tests and developer-only
-local test setup exercise that UI. Business tools will supply these adapters in Milestone 4.
+There is no browser proposal-creation endpoint. Model tool calls create proposals through
+the authenticated private Commerce adapter. Neither model-visible arguments nor browser
+SDK approval messages can execute a write without exact stored button consent.
 
 Every session MCP request is signed with a fresh short-lived context derived from D1.
 Commerce independently validates its signature, issuer/audience/key ID, expiry, scope,
@@ -271,7 +295,7 @@ Workers-compatible JSON-schema validator. Test infrastructure uses Miniflare 5's
 output paths. The existing compatibility date and ChatAgent `v1` migration are preserved.
 
 See [PROMPTS.md](PROMPTS.md) for the verbatim requirements/interview history and
-[PLAN.md](PLAN.md) for later milestones. Stop here before implementing commerce behavior.
+[PLAN.md](PLAN.md) for delivered behavior and the remaining refund/release milestones.
 
 Migration `0005_customer_names.sql` preserves the sealed `v1` catalog and installs
 `v2` with Ada, Brad, Cora, Dax, Elin, and Fenn. It updates original customer names
@@ -283,3 +307,24 @@ Historical approval payloads and audit records remain unchanged. Apply with
 the matching application code together: older code provisions from `v1`, while
 the updated code provisions from `v2`. No reset or additional seed is needed.
 `fixtures/seed-v1.sql` remains the historical catalog snapshot.
+
+## Milestone 4 approval execution and rollout
+
+Business schemas are defined in `shared/commerce-contract.ts`, scoped reads and transactional
+writes in `shared/commerce.ts`, and the exact eight-tool session catalog in the Commerce Worker.
+Tool results validate against strict success/error envelopes. Order cursors are signed for the
+current namespace/customer. Foreign and missing record IDs return the same safe not-found error.
+
+A model mutation call creates an immutable proposal and returns `APPROVAL_REQUIRED`. The browser
+records a CSRF/Origin-protected `/decision`, then invokes `/execute` with the same action ID and
+digest. The application loads the stored arguments and sends signed action-scoped context through
+private MCP. Commerce independently verifies consent and exact arguments before accepting.
+Consumption, business effects, stored result, and audit are one guarded D1 transaction. Completed
+replays return stored results; rejected, expired, revoked, stale, or altered actions cannot write.
+New ticket creation is limited to 20 approved tickets per session.
+
+Milestone 4 needs no new schema migration: Milestones 2–3 already supplied action results,
+approval/audit records, and commerce tables. Normal deploy uses `npm run deploy`; do not reset or
+reseed existing sessions. The previously deployed database already includes migrations 0001–0005.
+To test with real Workers AI locally, run `MILESTONE_LIVE_AI=1 npm run dev` using existing
+Cloudflare authentication. Commerce and D1 stay local; model inference uses the AI binding.

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { Button, InputArea, Surface, Text } from "@cloudflare/kumo";
+import { CommerceResultView } from "./commerce-result";
 import type { ChatAgent } from "./server";
 import type { actionView } from "../shared/consent";
 
@@ -36,6 +37,7 @@ async function api(path: string, csrf?: string, body?: unknown) {
   const data = (await response.json()) as Bootstrap & {
     error?: { code: string };
     actions: ActionView[];
+    result?: { ok: boolean; error?: { message: string } };
   };
   if (!response.ok) throw new Error(data.error?.code ?? "Request failed");
   return data;
@@ -82,12 +84,36 @@ function ApprovalCard({
         digest: action.digest,
         decision
       });
+      if (decision === "approve") await execute();
       refresh();
     } catch (e) {
       setError(
         e instanceof Error ? e.message : "Unable to record your decision"
       );
     } finally {
+      setBusy(false);
+    }
+  }
+  async function execute() {
+    const data = await api(`/api/actions/${action.actionId}/execute`, csrf, {
+      digest: action.digest
+    });
+    if (data.result && !data.result.ok)
+      throw new Error(
+        data.result.error?.message ?? "Unable to complete the action"
+      );
+  }
+  async function retry() {
+    setBusy(true);
+    setError("");
+    try {
+      await execute();
+    } catch (e) {
+      setError(
+        e instanceof Error ? e.message : "Unable to complete the action"
+      );
+    } finally {
+      refresh();
       setBusy(false);
     }
   }
@@ -134,6 +160,19 @@ function ApprovalCard({
             </Button>
           </div>
         )}
+      {action.state === "proposed" &&
+        action.decision === "approved" &&
+        !expired && (
+          <Button disabled={busy} onClick={() => void retry()}>
+            Retry approved action
+          </Button>
+        )}
+      {action.state === "completed" && action.result != null && (
+        <CommerceResultView
+          name={action.tool}
+          result={{ ok: true, data: action.result, request_id: "stored" }}
+        />
+      )}
       {error && <p role="alert">{error}</p>}
     </Surface>
   );
@@ -143,6 +182,28 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
   const [input, setInput] = useState("");
   const [notice, setNotice] = useState("");
   const [actions, setActions] = useState<ActionView[]>([]);
+  const [currentOrders, setCurrentOrders] = useState<unknown>(null);
+  const [ordersError, setOrdersError] = useState("");
+  const orderRequest = useRef(0);
+  const orderRevision = actions
+    .map((a) => `${a.actionId}:${a.state}`)
+    .join(",");
+  const refreshOrders = useCallback(() => {
+    const request = ++orderRequest.current;
+    void api("/api/orders")
+      .then((data) => {
+        if (request !== orderRequest.current) return;
+        setCurrentOrders(data);
+        setOrdersError("");
+      })
+      .catch(() => {
+        if (request === orderRequest.current)
+          setOrdersError("Unable to refresh orders. Please retry.");
+      });
+  }, []);
+  useEffect(() => {
+    refreshOrders();
+  }, [refreshOrders, orderRevision]);
   const agent = useAgent<ChatAgent>({
     agent: "ChatAgent",
     name: session.chatName,
@@ -177,9 +238,22 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
   }, [refresh]);
   return (
     <>
+      <Surface className="rounded-xl p-4 space-y-2" aria-label="Current orders">
+        <Text bold>Current orders</Text>
+        {currentOrders != null && (
+          <CommerceResultView
+            name="list_customer_orders"
+            result={currentOrders}
+          />
+        )}
+        {ordersError && <p role="alert">{ordersError}</p>}
+        <Button onClick={refreshOrders}>Refresh orders</Button>
+      </Surface>
       <Surface className="rounded-xl p-4 space-y-4 min-h-64">
         {messages.length === 0 && (
-          <p>Send a message to verify your private connection.</p>
+          <p>
+            Ask about your previous orders, delivery details, or saved address.
+          </p>
         )}
         {messages.map((message) => (
           <div key={message.id} className="space-y-2">
@@ -189,6 +263,18 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
                 <p className="whitespace-pre-wrap" key={index}>
                   {part.text}
                 </p>
+              ) : "output" in part && part.state === "output-available" ? (
+                <div key={index} className="rounded-lg border p-3">
+                  <p>Shop result when checked:</p>
+                  <CommerceResultView
+                    name={
+                      part.type === "dynamic-tool"
+                        ? part.toolName
+                        : part.type.replace(/^tool-/, "")
+                    }
+                    result={part.output}
+                  />
+                </div>
               ) : null
             )}
           </div>
