@@ -3,7 +3,7 @@ type Value = string | number | null;
 type Row = Record<string, Value>;
 type Entity = { table: string; id: string; row: Row };
 export type Statement = { sql: string; values: Value[] };
-export const fixtureVersion = "v1";
+export const fixtureVersion = "v2";
 const fixtureDate = "2026-10-01T12:00:00.000Z";
 const tables = [
   "customers",
@@ -21,12 +21,12 @@ export function fixtureEntities(): Entity[] {
   const add = (table: string, id: string, row: Row) =>
     entities.push({ table, id, row });
   const personas = [
-    ["ada", "Ada Example"],
-    ["bram", "Bram Sample"],
-    ["cora", "Cora Fixture"],
-    ["dax", "Dax Demo"],
-    ["elin", "Elin Placeholder"],
-    ["fenn", "Fenn Sandbox"]
+    ["ada", "Ada"],
+    ["bram", "Brad"],
+    ["cora", "Cora"],
+    ["dax", "Dax"],
+    ["elin", "Elin"],
+    ["fenn", "Fenn"]
   ];
   const orders: [number, string, string, number][] = [
     [101, "unshipped", "paid", 4200],
@@ -232,6 +232,10 @@ export async function catalogStatements(): Promise<Statement[]> {
       [fixtureVersion, entities.length]
     ),
     {
+      sql: "UPDATE fixture_versions SET active = 0 WHERE version <> ? AND active = 1",
+      values: [fixtureVersion]
+    },
+    {
       sql: "UPDATE fixture_versions SET active = 1, sealed = 1 WHERE version = ? AND active = 0",
       values: [fixtureVersion]
     }
@@ -258,10 +262,9 @@ export type NamespaceInput = {
   expiresAt: string;
 };
 
-export async function provisionNamespace(
-  db: D1Database,
+export async function namespaceStatements(
   input: NamespaceInput
-) {
+): Promise<Statement[]> {
   if (
     !/^[a-z0-9_-]{1,64}$/.test(input.ns) ||
     !/^[a-f0-9]{64}$/.test(input.tokenHash)
@@ -333,7 +336,14 @@ export async function provisionNamespace(
     sql: "UPDATE demo_sessions SET provisioning_state = 'ready' WHERE ns = ?",
     values: [input.ns]
   });
-  await executeBatch(db, statements);
+  return statements;
+}
+
+export async function provisionNamespace(
+  db: D1Database,
+  input: NamespaceInput
+) {
+  await executeBatch(db, await namespaceStatements(input));
 }
 
 export function namespaceAssertions(ns: string): Statement[] {

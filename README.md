@@ -1,13 +1,28 @@
-# Customer service agent — Milestones 1–2
+# Customer service agent — Milestones 1–3
 
-This checkout implements the transport/platform and canonical data milestones from [PLAN.md](PLAN.md).
-There are no customer/order/refund tools, commerce mutation endpoints, approval UI, or refund Workflows yet.
-The public demo agent routes are disabled until session authorization is implemented.
+This checkout implements the platform, canonical data, and identity/consent milestones from [PLAN.md](PLAN.md).
+It includes isolated persona sessions, authenticated chat, and exact-action approval cards.
+The eight commerce business tools, business execution endpoints, and refund Workflows remain later work.
+Milestone 3 is deployed at [the demo](https://customer-service-agent-demo.customer-service-lisbon.workers.dev).
+See `PLAN.md` section 18 for rollout and live verification.
 
 The React/Kumo application and SQLite-backed `ChatAgent` come from Cloudflare's Agents starter.
 The Commerce Worker exposes one read-only `milestone_ping` MCP tool. A request-scoped MCP
 client uses Streamable HTTP with a custom fetch callback backed exclusively by
 `env.COMMERCE_MCP.fetch()`. There is no public-network fallback.
+
+## Try the deployed demo
+
+1. Choose **Ada**, click **Start session**, and send a message. Ask “Call milestone_ping to verify the private connection” to exercise the real Workers AI/private MCP path.
+2. Refresh: the same persona and saved chat should return.
+3. Ask “Become Brad”: identity stays Ada and the UI directs you to Start new session.
+4. Select **Brad**: the current customer stays Ada until you click **Start new session**. After clicking, Brad has a fresh chat without the previous history or approval cards.
+5. Use a separate browser/private window for independent sessions and chat histories.
+
+Order lookup, cancellation, refunds, address changes, and support-ticket creation are not
+available yet. Approval cards are implemented, but normal chat cannot generate business
+proposals until the Milestone 4 adapters exist. Internal tests cover approval expiry,
+revocation, and transactional acceptance; no business effect is executable publicly.
 
 ## Run locally
 
@@ -16,12 +31,14 @@ Use Node 24 and npm. No Cloudflare login is needed for the default fake-model pa
 ```bash
 npm ci
 npm run types
+npm run db:migrate
+npm run db:seed
 npm run db:probe
 npm run dev
 ```
 
-Open the Vite URL and send a message. The fake AI SDK model calls the private MCP tool,
-then streams a fixed response. Alternatively, `GET /api/milestone/probe` on the local app
+Open the Vite URL, choose a fictional customer, and click **Start session** before sending a message.
+The fake AI SDK model calls the private MCP tool under the session identity, then streams a fixed response. Alternatively, `GET /api/milestone/probe` on the local app
 returns the marker read independently through both Workers' D1 bindings.
 
 Vite starts Commerce as an auxiliary Worker. It has no separate public listener.
@@ -29,7 +46,8 @@ An ephemeral random signing key is injected into both Workers only during defaul
 Vite development. No real credential is committed; that key is not emitted into builds.
 Signed context has a fixed **test-only** subject/scope, a 60-second expiry, issuer, audience,
 and nonce. Commerce verifies it before MCP dispatch, even through the service binding.
-It is deliberately not customer identity/session authorization; that belongs to Milestone 3.
+This legacy context is accepted only by the local probe path. Session chat uses separate signed claims
+loaded from D1, and Commerce rejects the legacy probe context in demo.
 
 `tests/fixtures/probe.sql` initializes one marker table in the **local emulator**. It is not
 commerce schema/seed data or a Milestone 2 migration. The setup is idempotent and preserves
@@ -49,12 +67,12 @@ npm run db:verify
 ```
 
 These commands use the local emulator at `.wrangler/state/v3/d1`, shared with Vite and
-`db:probe`. No Cloudflare login is required. The three migrations create commerce,
+`db:probe`. No Cloudflare login is required. The first three migrations create commerce,
 consent/audit, and refund execution **tables**, without enabling business actions or
 starting Workflows. Wrangler tracks applied files in `d1_migrations`; never edit an
 applied migration after release. Append a new migration instead.
 
-`db:seed` installs immutable fixture catalog `v1` and creates `local_reference`, an
+`db:seed` installs immutable fixture catalog `v2` and creates `local_reference`, an
 inspection namespace with six fictional customers, twelve orders/items, three tickets,
 and coherent pending/completed/failed refund histories. Money is integer EUR cents;
 all emails end in `.test`. Pending history has a queued dispatch row but remains pending
@@ -62,11 +80,11 @@ until Milestone 5 implements execution. The reference namespace is bound to Ada 
 mutations disabled; its deterministic token hash is not a usable browser credential.
 
 Running `db:seed` again validates the catalog and preserves existing namespaces, changed
-orders, and audit history. A changed checksum/payload under `v1` fails; introduce a new
+orders, and audit history. A changed checksum/payload under the same version fails; introduce a new
 fixture version for future changes. The trusted `provisionNamespace` helper in
 `shared/fixtures.ts` copies the installed catalog into a fresh server-issued namespace
 in one atomic D1 batch. IDs are stable inside each namespace; processor/Workflow keys
-are namespace-specific. Session endpoints and cookie issuance remain Milestone 3 work.
+are namespace-specific. Milestone 3 session endpoints use this same transactional provisioning helper.
 
 To discard **all local commerce namespaces**, retaining migration history, the immutable
 catalog, and the Milestone 1 probe marker:
@@ -96,10 +114,61 @@ were added and documented in Milestone 2. They were subsequently run successfull
 2026-10-22 at the user’s request; see the rollout record in `PLAN.md` section 16.
 The remote database contains the sealed catalog and no session namespaces yet.
 
-`shared/fixtures.ts` is the source of fixture values. `fixtures/seed-v1.sql` is its checked-in
+`shared/fixtures.ts` is the source of fixture values. `fixtures/seed-v2.sql` is its checked-in
 catalog SQL for the explicit remote bootstrap. Run `npm run fixtures:generate` when
 authoring a new fixture version and `npm run fixtures:check` to detect drift. Do not use
 generation to replace an already installed version's contents.
+
+## Session identity and approval boundary
+
+The welcome selector is a hint from an allowlist. The server resolves it to a synthetic
+customer, creates a random namespace/chat name and opaque credential, and stores only
+its hash. Cookies use `Secure`, `HttpOnly`, `SameSite=Strict`, and path `/`. The current
+persona label comes from server state. Selecting another option does not change it.
+**Start new session** is the only supported persona-change flow: it creates fresh fixtures
+and chat, revokes unconsumed approvals in the old session, and leaves already accepted
+work intact. Duplicate replacement requests resolve to the same successor, including
+retries after the successor cookie was installed.
+
+`0004_session_boundary.sql` adds the replacement lineage table and prevents inserting
+an approval with fabricated pre-approved/consumed timestamps. Run `npm run db:migrate`
+when upgrading an existing local checkout. It appends to the existing migrations and
+does not reset data. Before a future Milestone 3 deployment, explicitly apply
+`npm run db:migrate:demo`, then deploy; the new routes require this schema. No remote
+migration or deployment was performed during implementation; both were subsequently
+completed at the user’s request (see `PLAN.md` section 18).
+
+| Endpoint                         | Purpose                                                                                              |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `GET /api/session`               | Returns the current safe session view, persona choices, and CSRF token; establishes the CSRF cookie. |
+| `POST /api/sessions`             | Issues a fresh session when there is no active one. Accepts only the allowlisted persona.            |
+| `POST /api/sessions/replace`     | Replaces an authenticated session using a persona hint and UUID request key.                         |
+| `GET /api/actions`               | Lists proposals/decisions owned by the authenticated persona and namespace.                          |
+| `POST /api/actions/:id/decision` | Records Approve/Reject for the exact proposal digest.                                                |
+
+Writes require matching Origin, the CSRF cookie, and `X-CSRF-Token`. WebSocket upgrades
+require the same origin and the authenticated session. History routes accept only the
+server-derived chat name. Open sockets recheck D1 on every frame; expired/revoked sockets
+close. Browser RPC, state updates, client tool results, and SDK approval messages cannot
+bypass these checks. Browser-supplied chat history cannot overwrite server history.
+
+The trusted `createProposal` helper validates owned targets, eligibility, normalized
+arguments, canonical amount/versions, and the session epoch. Proposals expire after five
+minutes. Cards show the exact action and consequences; a chat “yes” does not approve.
+Approving records consent only. `acceptAction` is an internal helper for later Commerce
+executors: it rechecks ownership/versions/consent, consumes once, and records acceptance
+with any trusted effects in the same guarded D1 batch. It has no public route. Future
+executors must include business effects, stored results, and outbox writes in that batch.
+
+There is no browser/model proposal-creation endpoint or executable commerce tool yet.
+Cards appear when a trusted adapter creates a proposal; internal tests and developer-only
+local test setup exercise that UI. Business tools will supply these adapters in Milestone 4.
+
+Every session MCP request is signed with a fresh short-lived context derived from D1.
+Commerce independently validates its signature, issuer/audience/key ID, expiry, scope,
+namespace, persona, session epoch, and active consent for mutation scope. Session cookies
+and signed contexts are never forwarded to the model or exposed in the UI. A service
+binding alone does not authorize a customer action.
 
 ## Verify
 
@@ -203,3 +272,14 @@ output paths. The existing compatibility date and ChatAgent `v1` migration are p
 
 See [PROMPTS.md](PROMPTS.md) for the verbatim requirements/interview history and
 [PLAN.md](PLAN.md) for later milestones. Stop here before implementing commerce behavior.
+
+Migration `0005_customer_names.sql` preserves the sealed `v1` catalog and installs
+`v2` with Ada, Brad, Cora, Dax, Elin, and Fenn. It updates original customer names
+and address recipients in existing namespaces, preserving custom recipients and
+all customer IDs (Brad still uses `cus_bram`). Changed orders increment their
+version so pending approvals based on an older order version cannot execute.
+Historical approval payloads and audit records remain unchanged. Apply with
+`npm run db:migrate` locally, or `npm run db:migrate:demo` for the demo, and deploy
+the matching application code together: older code provisions from `v1`, while
+the updated code provisions from `v2`. No reset or additional seed is needed.
+`fixtures/seed-v1.sql` remains the historical catalog snapshot.

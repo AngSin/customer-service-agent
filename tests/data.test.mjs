@@ -39,7 +39,7 @@ before(async () => {
       script:
         "export default {fetch() {return new Response('No public data API')}}",
       compatibilityDate: "2026-06-11",
-      d1Databases: { DB: "data-test" }
+      d1Databases: { DB: "data-test", UPGRADE: "upgrade-test" }
     })
   );
   db = await mf.getD1Database("DB");
@@ -71,7 +71,7 @@ test("forward migrations preserve the existing marker and generate the expected 
   ]);
   assert.equal((await query("PRAGMA foreign_key_check")).length, 0);
   assert.equal(
-    await readFile("fixtures/seed-v1.sql", "utf8"),
+    await readFile("fixtures/seed-v2.sql", "utf8"),
     await generatedSeedSql()
   );
   assert.equal(
@@ -163,7 +163,7 @@ test("SQL catalog bootstrap can be repeated and refuses mismatched installed ver
   await executeBatch(db, sqlStatements(await generatedSeedSql()));
   await executeBatch(db, sqlStatements(await generatedSeedSql()));
   const statements = sqlStatements(await generatedSeedSql());
-  // Simulate shipping changed v1 contents without changing its version.
+  // Simulate shipping changed catalog contents without changing its version.
   statements[0].values = [];
   statements[0].sql = statements[0].sql.replace(
     /'[a-f0-9]{64}'/,
@@ -364,13 +364,13 @@ test("action payload and audit are immutable; no acceptance without exact active
     /approval/
   );
   await run(
-    "INSERT INTO approvals(ns, approval_id, action_id, digest, approval_epoch, proposed_at, expires_at, approved_at) VALUES (?, 'approval', 'action', ?, 1, ?, ?, ?)",
+    "INSERT INTO approvals(ns, approval_id, action_id, digest, approval_epoch, proposed_at, expires_at) VALUES (?, 'approval', 'action', ?, 1, ?, ?)",
     ns,
     "a".repeat(64),
     now,
-    expiry,
-    now
+    expiry
   );
+  await run("UPDATE approvals SET approved_at = ? WHERE ns = ?", now, ns);
   await assert.rejects(
     run("UPDATE approvals SET consumed_at = ? WHERE ns = ?", now, ns),
     /inactive/
@@ -548,4 +548,111 @@ test("local reset rejects remote/demo/extra arguments before touching storage", 
     /refuse/
   );
   assert.equal(dataCommand(["reset"], {}), "reset");
+});
+
+test("customer-name migration preserves v1, custom recipients, and existing relationships", async () => {
+  const upgrade = await mf.getD1Database("UPGRADE");
+  const rows = async (sql) => (await upgrade.prepare(sql).all()).results;
+  for (const name of (await readdir("migrations"))
+    .sort()
+    .filter((name) => name < "0005")) {
+    await executeBatch(
+      upgrade,
+      sqlStatements(await readFile(`migrations/${name}`, "utf8"))
+    );
+  }
+  await executeBatch(
+    upgrade,
+    sqlStatements(await readFile("fixtures/seed-v1.sql", "utf8"))
+  );
+  const original = await rows(
+    "SELECT * FROM fixture_records WHERE fixture_version = 'v1' ORDER BY entity_type, fixture_id"
+  );
+  const legacyVersion = await rows(
+    "SELECT checksum, sealed FROM fixture_versions WHERE version = 'v1'"
+  );
+  const clone = [
+    {
+      sql: "INSERT INTO demo_sessions(ns,token_hash,customer_id,chat_name,fixture_version,created_at,expires_at) VALUES ('legacy', ?, 'cus_ada', 'legacy', 'v1', '2026-10-01', '2027-10-01')",
+      values: ["a".repeat(64)]
+    }
+  ];
+  for (const { table, id, row } of fixtureEntities().filter((e) =>
+    ["customers", "orders"].includes(e.table)
+  )) {
+    const columns = Object.keys(row);
+    clone.push({
+      sql: `INSERT INTO ${table}(ns, ${columns.join(",")}) SELECT 'legacy', ${columns.map((c) => `json_extract(payload_json, '$.${c}')`).join(",")} FROM fixture_records WHERE fixture_version='v1' AND entity_type=? AND fixture_id=?`,
+      values: [table, id]
+    });
+  }
+  clone.push({
+    sql: "UPDATE orders SET address_json=json_set(address_json, '$.recipient', 'Custom recipient') WHERE order_id='ord_102'",
+    values: []
+  });
+  await executeBatch(upgrade, clone);
+  const migration = await readFile(
+    "migrations/0005_customer_names.sql",
+    "utf8"
+  );
+  assert.ok(migration.includes(await generatedSeedSql()));
+  await executeBatch(upgrade, sqlStatements(migration));
+  assert.deepEqual(
+    await rows(
+      "SELECT * FROM fixture_records WHERE fixture_version = 'v1' ORDER BY entity_type, fixture_id"
+    ),
+    original
+  );
+  assert.deepEqual(
+    await rows(
+      "SELECT checksum, sealed FROM fixture_versions WHERE version = 'v1'"
+    ),
+    legacyVersion
+  );
+  assert.deepEqual(
+    await rows("SELECT version FROM fixture_versions WHERE active=1"),
+    [{ version: "v2" }]
+  );
+  assert.deepEqual(
+    (await rows("SELECT display_name FROM customers ORDER BY customer_id")).map(
+      (r) => r.display_name
+    ),
+    ["Ada", "Brad", "Cora", "Dax", "Elin", "Fenn"]
+  );
+  assert.deepEqual(
+    await rows(
+      "SELECT json_extract(address_json,'$.recipient') AS recipient,version FROM orders WHERE order_id='ord_101'"
+    ),
+    [{ recipient: "Ada", version: 2 }]
+  );
+  assert.deepEqual(
+    await rows(
+      "SELECT json_extract(address_json,'$.recipient') AS recipient,version FROM orders WHERE order_id='ord_102'"
+    ),
+    [{ recipient: "Custom recipient", version: 1 }]
+  );
+  assert.deepEqual(await rows("SELECT fixture_version FROM demo_sessions"), [
+    { fixture_version: "v1" }
+  ]);
+  assert.equal((await rows("PRAGMA foreign_key_check")).length, 0);
+  const customers = await rows("SELECT * FROM customers ORDER BY customer_id");
+  await executeBatch(upgrade, sqlStatements(migration));
+  assert.deepEqual(
+    await rows("SELECT * FROM customers ORDER BY customer_id"),
+    customers
+  );
+  const fresh = await localReferenceInput();
+  fresh.ns = "fresh_v2";
+  fresh.chatName = "fresh_v2";
+  await provisionNamespace(upgrade, fresh);
+  assert.deepEqual(
+    await rows("SELECT fixture_version FROM demo_sessions WHERE ns='fresh_v2'"),
+    [{ fixture_version: "v2" }]
+  );
+  assert.deepEqual(
+    await rows(
+      "SELECT display_name FROM customers WHERE ns='fresh_v2' AND customer_id='cus_bram'"
+    ),
+    [{ display_name: "Brad" }]
+  );
 });

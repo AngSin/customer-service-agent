@@ -27,7 +27,13 @@ for (const worker of [
   {
     name: "tests",
     base: "tsconfig.json",
-    paths: ["tests/harness.ts", "src/**/*", "shared/**/*", "env.d.ts"]
+    paths: [
+      "tests/harness.ts",
+      "tests/security-harness.ts",
+      "src/**/*",
+      "shared/**/*",
+      "env.d.ts"
+    ]
   }
 ]) {
   const path = `.wrangler/types/${worker.name}-tsconfig.json`;

@@ -7,12 +7,14 @@ import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/client/valida
 import {
   MCP_URL,
   signContext,
+  signSessionContext,
   type ContextConfig
 } from "../shared/mcp-context";
 import { probeSchema, readProbeMarker } from "../shared/probe";
 
 export interface CommerceConnection extends ContextConfig {
   COMMERCE_MCP: Pick<Fetcher, "fetch">;
+  session?: { db: D1Database; tokenHash: string };
 }
 
 export function bindingFetch(env: CommerceConnection): FetchLike {
@@ -23,7 +25,10 @@ export function bindingFetch(env: CommerceConnection): FetchLike {
     headers.delete("Cookie");
     // A binding does not synthesize Host like a public HTTP connection does.
     headers.set("Host", new URL(MCP_URL).host);
-    headers.set("Authorization", `Bearer ${await signContext(env)}`);
+    headers.set(
+      "Authorization",
+      `Bearer ${env.session ? await signSessionContext(env, env.session.db, env.session.tokenHash) : await signContext(env)}`
+    );
     const response = await env.COMMERCE_MCP.fetch(
       new Request(request, { headers, redirect: "manual" })
     );
@@ -33,6 +38,21 @@ export function bindingFetch(env: CommerceConnection): FetchLike {
     }
     return response;
   };
+}
+
+export async function runSessionProbe(env: CommerceConnection) {
+  if (!env.session) throw new Error("Session required");
+  const client = await connectCommerce(env);
+  try {
+    const result = await client.callTool({
+      name: "milestone_ping",
+      arguments: {}
+    });
+    if (result.isError) throw new Error("Session probe failed");
+    return probeSchema.parse(result.structuredContent);
+  } finally {
+    await client.close();
+  }
 }
 
 export async function connectCommerce(env: CommerceConnection) {

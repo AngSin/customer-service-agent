@@ -65,8 +65,8 @@ async function main() {
   if (command === "generate" || command === "check") {
     const expected = await generatedSeedSql();
     if (command === "generate")
-      await writeFile("fixtures/seed-v1.sql", expected);
-    else if ((await readFile("fixtures/seed-v1.sql", "utf8")) !== expected) {
+      await writeFile("fixtures/seed-v2.sql", expected);
+    else if ((await readFile("fixtures/seed-v2.sql", "utf8")) !== expected) {
       throw new Error("Fixture SQL is stale; run npm run fixtures:generate");
     }
     console.log(
@@ -77,7 +77,7 @@ async function main() {
   if (command === "seed-demo") {
     // Explicit catalog bootstrap only. No namespace, reset, or Workflow execution.
     if (
-      (await readFile("fixtures/seed-v1.sql", "utf8")) !==
+      (await readFile("fixtures/seed-v2.sql", "utf8")) !==
       (await generatedSeedSql())
     ) {
       throw new Error("Fixture SQL is stale; run npm run fixtures:generate");
@@ -95,7 +95,7 @@ async function main() {
         "--config",
         "workers/commerce/wrangler.jsonc",
         "--file",
-        "fixtures/seed-v1.sql"
+        "fixtures/seed-v2.sql"
       ],
       { stdio: "inherit" }
     );

@@ -405,3 +405,76 @@ I see a bunch of sql files in migrations, can you summarise all the tables, what
 ```text
 ok the business domain related entities make sense, but what is a "fixture" in this context. document this prompt (along with all others in this chat)
 ```
+
+## 25. User — implement Milestone 3
+
+```text
+ok understood, please now implement milestone 3, update PLAN.md & PROMPTS.md and summarise the changes made
+```
+
+## 26. User — ask why Milestone 3 adds a migration
+
+```text
+why did you create a new migration file?
+```
+
+## 27. User — deploy Milestone 3 and explain what can be tested
+
+```text
+can you deploy this and tell me what can be tested now
+```
+
+## 28. User — ask whether the displayed milestone_ping response is expected
+
+Attachment: Screenshot 2026-10-22 at 23.23.35.png
+
+```text
+it's strange that i got this message after entering “Call milestone_ping once to verify the private connection.”, is this expected?
+```
+
+## 29. User — ask for a natural-language tool-use example
+
+````text
+ok seems to have worked now:
+
+**user**
+become Ada
+**user**
+Call milestone_ping once to verify the private connection.
+**assistant**
+The function call to \`milestone_ping\` has been executed, verifying the private connection. The response indicates that the session is authorized and the milestone-1-probe has been successful.
+
+obviously a user acting naturally will not name functions so give me an example of a tool call i can use, i am thinking of prompting "tell me the details of all the orders i placed previously"
+````
+
+## 30. User — simplify customer display names
+
+```text
+i see, yes that works
+
+additionally, i notice that the customers are named different "Ada Example", "Brad Fixture", "Cora Sample", can we instead just name the customer without the suffix? so Ada, Brad, Cora
+```
+
+## 31. User — check seeded database names after the display-name change
+
+```text
+i see that you changed the names in the frontend, what about the actual seeded data in the database, can you check that doesn't need to be cahnged?
+```
+
+## 32. User — create a database migration for customer names
+
+```text
+ok, then please create a database migration to update the names in the database as well
+```
+
+## 33. User — deploy and apply the customer-name migration
+
+```text
+ok, please deploy & run the migration
+```
+
+## 34. User — commit and push the deployed changes
+
+```text
+ok, please commit and push these changes
+```

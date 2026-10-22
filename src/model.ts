@@ -2,7 +2,7 @@ import { createAI } from "agents/models/ai-sdk";
 import { MockLanguageModelV4 } from "ai/test";
 import { simulateReadableStream, tool } from "ai";
 import { z } from "zod";
-import { runMilestoneProbe } from "./commerce-client";
+import { runMilestoneProbe, runSessionProbe } from "./commerce-client";
 
 export const LLAMA_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
 const usage = {
@@ -19,7 +19,7 @@ export function fakeModel() {
           ? [
               {
                 type: "text",
-                text: "Milestone 1 probe complete. No commerce mutations are available."
+                text: "Private connection verified. No commerce mutations are available."
               }
             ]
           : [
@@ -51,7 +51,7 @@ export function fakeModel() {
                     type: "text-delta" as const,
                     id: "reply",
                     delta:
-                      "Milestone 1 probe complete. No commerce mutations are available."
+                      "Private connection verified. No commerce mutations are available."
                   },
                   { type: "text-end" as const, id: "reply" }
                 ]
@@ -87,13 +87,19 @@ export function selectModel(env: Pick<Env, "MODEL_MODE" | "AI">) {
   throw new Error("Unsupported model mode");
 }
 
-export function milestoneTools(env: Env) {
+export function milestoneTools(env: Env, sessionHash?: string) {
   return {
     milestone_ping: tool({
       description:
         "Read the private MCP/shared D1 transport probe. No business action.",
       inputSchema: z.strictObject({}),
-      execute: async () => runMilestoneProbe(env)
+      execute: async () =>
+        sessionHash
+          ? runSessionProbe({
+              ...env,
+              session: { db: env.DB, tokenHash: sessionHash }
+            })
+          : runMilestoneProbe(env)
     })
   };
 }

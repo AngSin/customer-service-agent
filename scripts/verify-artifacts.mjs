@@ -33,7 +33,7 @@ for (const config of [app, commerce]) {
   assert.equal(
     config.workflows.length,
     0,
-    "Refund execution is outside Milestone 2"
+    "Refund execution is outside Milestone 3"
   );
 }
 console.log(

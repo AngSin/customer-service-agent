@@ -1,7 +1,11 @@
 import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
-import { MCP_URL, verifyContext } from "../../../shared/mcp-context";
+import {
+  MCP_URL,
+  PROBE_SUBJECT,
+  verifySessionContext
+} from "../../../shared/mcp-context";
 import { probeSchema, readProbeMarker } from "../../../shared/probe";
 
 export default {
@@ -10,7 +14,7 @@ export default {
       return new Response("Not found", { status: 404 });
     let identity;
     try {
-      identity = await verifyContext(request, env);
+      identity = await verifySessionContext(request, env, env.DB);
     } catch {
       return Response.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -36,8 +40,11 @@ export default {
           async () => {
             try {
               const result = {
-                marker: await readProbeMarker(env.DB),
-                subject: identity.sub
+                marker:
+                  identity.scope === "milestone:read"
+                    ? await readProbeMarker(env.DB)
+                    : "session-authorized",
+                subject: PROBE_SUBJECT
               };
               return {
                 structuredContent: result,
