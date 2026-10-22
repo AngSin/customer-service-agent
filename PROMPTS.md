@@ -331,6 +331,51 @@ Keep signed MCP request-context validation in the test setup. Missing or invalid
 Append this prompt verbatim to PROMPTS.md. Do not provision Cloudflare resources, deploy, add real credentials, or commit changes. Run the relevant checks and report the files changed, commands/tests run, results, and any compatibility issues. Stop after Milestone 1; I’ll review it before asking you to continue.
 ```
 
+## 19a. User — deployment failure output (backfilled from this chat)
+
+The user supplied terminal output from `npm run deploy`. The command built with Vite and then ran `wrangler deploy --secrets-file .env --env demo`. The supplied output showed default/local bindings (`APP_STAGE=local`, `MODEL_MODE=fake`, `COMMERCE_MCP=customer-service-commerce`), a missing `MCP_CONTEXT_KEY` build warning, and this deployment failure:
+
+```text
+✘ [ERROR] A request to the Cloudflare API (/accounts/6107519c90983ef46e24a6daf69de7c1/workers/scripts/customer-service-agent/versions) failed.
+
+  Service binding 'COMMERCE_MCP' references Worker 'customer-service-commerce' which was not found.
+  Verify the Worker exists in your account and that the service name in your configuration is
+  correct. [code: 10143]
+```
+
+This entry summarizes the earlier terminal attachment and quotes its substantive error; it is not a verbatim reproduction of the full build log.
+
+## 19b. User — run the corrected deployment (backfilled from this chat)
+
+```text
+Can you run this?
+```
+
+## 19c. User — commit and push the deployment fix (backfilled from this chat)
+
+```text
+Can you commit the change you made and push it?
+```
+
+## 19d. User — explain Milestones 1 and 2 (backfilled from this chat)
+
+```text
+Summarise what was done in milestone 1 and tell me about milestone 2
+```
+
+## 19e. User — ask about the deployed frontend error (backfilled from this chat)
+
+```text
+# Files mentioned by the user:
+
+## Pasted Image 1.jpg: /tmp/codex-remote-attachments/01a1637f-cbe5-7382-8602-019ff4abd23a/B8E37258-6262-4415-A6EC-F6D2172D8CB9/1-Pasted-Image-1.jpg
+
+## My request:
+Ok understood. I tried to interact with the agent. Can you tell me if this error is expected in the frontend right now? Look at the attached image
+```
+
+Attachment: screenshot of the deployed Milestone 1 frontend displaying the submitted “Hi” and “Demo agent routes remain disabled until session authorization is implemented.”
+
 ## 20. User — implement Milestone 2 (interrupted before implementation)
 
 ```text
@@ -347,4 +392,16 @@ Please implement milestone 2. Document how to seed data and edit the PLAN.md fil
 
 ```text
 Ok can you push this, then run deploy, migrate, seed & verify. Document this prompt and all following prompts in md file
+```
+
+## 23. User — explain migration tables and relationships
+
+```text
+I see a bunch of sql files in migrations, can you summarise all the tables, what they're for and the relations between them. pls also document this prompt in PROMPTS.md (along with all upcoming)
+```
+
+## 24. User — explain fixtures and document all chat prompts
+
+```text
+ok the business domain related entities make sense, but what is a "fixture" in this context. document this prompt (along with all others in this chat)
 ```
