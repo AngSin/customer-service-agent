@@ -1,7 +1,7 @@
-# Customer service agent — Milestone 1
+# Customer service agent — Milestones 1–2
 
-This checkout implements **only the transport/platform milestone** from [PLAN.md](PLAN.md).
-There are no customer/order/refund tools, commerce mutations, approvals, or refund Workflows yet.
+This checkout implements the transport/platform and canonical data milestones from [PLAN.md](PLAN.md).
+There are no customer/order/refund tools, commerce mutation endpoints, approval UI, or refund Workflows yet.
 The public demo agent routes are disabled until session authorization is implemented.
 
 The React/Kumo application and SQLite-backed `ChatAgent` come from Cloudflare's Agents starter.
@@ -33,8 +33,71 @@ It is deliberately not customer identity/session authorization; that belongs to 
 
 `tests/fixtures/probe.sql` initializes one marker table in the **local emulator**. It is not
 commerce schema/seed data or a Milestone 2 migration. The setup is idempotent and preserves
-an existing marker. Both default Worker configs bind the same local database ID. The demo
-D1 ID is an explicit unprovisioned placeholder; no database has been created remotely.
+an existing marker. Both default Worker configs bind `commerce-local` using the same local
+database ID, separate from `customer-service-demo`. The demo Workers were deployed after
+Milestone 1; Milestone 2 does not automatically migrate or seed their remote database.
+
+## Migrate and seed commerce data
+
+Stop local development while applying migrations or resetting. Use Node 24, including for
+the data scripts, which import the shared TypeScript fixture helpers directly.
+
+```bash
+npm run db:migrate
+npm run db:seed
+npm run db:verify
+```
+
+These commands use the local emulator at `.wrangler/state/v3/d1`, shared with Vite and
+`db:probe`. No Cloudflare login is required. The three migrations create commerce,
+consent/audit, and refund execution **tables**, without enabling business actions or
+starting Workflows. Wrangler tracks applied files in `d1_migrations`; never edit an
+applied migration after release. Append a new migration instead.
+
+`db:seed` installs immutable fixture catalog `v1` and creates `local_reference`, an
+inspection namespace with six fictional customers, twelve orders/items, three tickets,
+and coherent pending/completed/failed refund histories. Money is integer EUR cents;
+all emails end in `.test`. Pending history has a queued dispatch row but remains pending
+until Milestone 5 implements execution. The reference namespace is bound to Ada and has
+mutations disabled; its deterministic token hash is not a usable browser credential.
+
+Running `db:seed` again validates the catalog and preserves existing namespaces, changed
+orders, and audit history. A changed checksum/payload under `v1` fails; introduce a new
+fixture version for future changes. The trusted `provisionNamespace` helper in
+`shared/fixtures.ts` copies the installed catalog into a fresh server-issued namespace
+in one atomic D1 batch. IDs are stable inside each namespace; processor/Workflow keys
+are namespace-specific. Session endpoints and cookie issuance remain Milestone 3 work.
+
+To discard **all local commerce namespaces**, retaining migration history, the immutable
+catalog, and the Milestone 1 probe marker:
+
+```bash
+npm run db:reset
+npm run db:seed
+```
+
+Local data commands reject extra arguments such as `--remote`, `--env demo`, and
+`--config`, and refuse to run with `CLOUDFLARE_ENV` set. Reset executes a transactional
+deletion in dependency order and restores the append-only audit trigger. No demo reset
+command or public seed/reset endpoint exists. Do not manually execute `reset-local.sql`
+against a remote database.
+
+For an **explicit demo bootstrap**, check both configs point to the intended shared demo
+database, authenticate Wrangler, and run these separately from deployment:
+
+```bash
+npm run db:migrate:demo
+npm run db:seed:demo
+```
+
+Remote seeding installs only the catalog; it creates no reference/browser session and
+does not reset existing commerce. Deploys never seed or reset data. These remote commands
+were added and documented in Milestone 2; they were not executed as part of its checks.
+
+`shared/fixtures.ts` is the source of fixture values. `fixtures/seed-v1.sql` is its checked-in
+catalog SQL for the explicit remote bootstrap. Run `npm run fixtures:generate` when
+authoring a new fixture version and `npm run fixtures:check` to detect drift. Do not use
+generation to replace an already installed version's contents.
 
 ## Verify
 
@@ -42,6 +105,7 @@ D1 ID is an explicit unprovisioned placeholder; no database has been created rem
 npm run types
 npm run types:check
 npm run check
+npm run fixtures:check
 npm test
 npm run build:demo
 npm run verify:artifacts
@@ -55,7 +119,9 @@ after binding changes. `types:check` verifies the generated declarations are cur
 Tests use real local Workers, D1, and the SDK transport. Global network fetch is blocked
 inside the test bundles. They cover MCP handshake/catalog/SSE tool results, shared D1,
 missing/invalid/expired/wrong-audience context, destination/redirect guards, absence of
-commerce tools, and fake-model generation/streaming. A Vite integration test also checks
+commerce tools, and fake-model generation/streaming. Data tests apply all migrations to
+isolated D1 instances and cover fixtures, constraints, namespace isolation, transactional
+rollback, seed preservation, and reset safeguards. A Vite integration test also checks
 the actual auxiliary binding and chat Durable Object. CI runs these checks without
 Cloudflare credentials and never deploys.
 
@@ -96,7 +162,7 @@ Authorization with signed context, strips cookies, and rejects redirects/alterna
 
 `npm run build:demo` selects `CLOUDFLARE_ENV=demo` before Vite builds.
 `npm run verify:artifacts` checks the emitted binding target, private Commerce ingress,
-shared placeholder database, required secret declaration, and absence of local keys or
+shared demo database, required secret declaration, and absence of local keys or
 refund Workflows. This validates build configuration, **not deployed binding resolution**.
 To deploy, configure the demo D1 database in both Worker configs and put `MCP_CONTEXT_KEY`
 in the root `.env` file. Run `npm run deploy` to build with `CLOUDFLARE_ENV=demo`, deploy

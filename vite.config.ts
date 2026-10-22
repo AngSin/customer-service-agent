@@ -10,6 +10,9 @@ export default defineConfig(({ command }) => {
   const live = local && process.env.MILESTONE_LIVE_AI === "1";
   // Ephemeral, local-only test key; never emitted into built demo artifacts.
   const localKey = randomBytes(32).toString("hex");
+  // Wrangler loads declared secrets after vars. Keep root .env deployment
+  // secrets from overriding only one Worker's ephemeral local signing key.
+  if (local) process.env.MCP_CONTEXT_KEY = localKey;
   return {
     plugins: [
       agents(),

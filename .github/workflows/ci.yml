@@ -1,4 +1,4 @@
-name: Milestone 1 checks
+name: Platform and data checks
 on: [push, pull_request, workflow_dispatch]
 permissions:
   contents: read
@@ -18,6 +18,7 @@ jobs:
       - run: npm run types
       - run: npm run types:check
       - run: npm run check
+      - run: npm run fixtures:check
       - run: npm test
       - run: npm run build:demo
       - run: npm run verify:artifacts

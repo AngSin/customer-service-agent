@@ -18,9 +18,11 @@ assert.equal(
   app.d1_databases[0].database_id,
   commerce.d1_databases[0].database_id
 );
-assert.equal(
+assert.equal(app.d1_databases[0].database_name, "customer-service-demo");
+assert.match(app.d1_databases[0].database_id, /^[a-f0-9-]{36}$/);
+assert.notEqual(
   app.d1_databases[0].database_id,
-  "00000000-0000-0000-0000-000000000002"
+  "00000000-0000-0000-0000-000000000001"
 );
 for (const config of [app, commerce]) {
   assert.ok(
@@ -31,9 +33,9 @@ for (const config of [app, commerce]) {
   assert.equal(
     config.workflows.length,
     0,
-    "Refund execution is outside Milestone 1"
+    "Refund execution is outside Milestone 2"
   );
 }
 console.log(
-  "Verified demo binding target, private Commerce ingress, shared placeholder D1, and absence of local signing keys/Workflows. No deployed resources were checked."
+  "Verified demo binding target, private Commerce ingress, shared demo D1, and absence of local signing keys/Workflows. No deployed resources were checked."
 );

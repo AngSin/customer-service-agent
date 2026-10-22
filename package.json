@@ -25,7 +25,15 @@
     "test": "node --test tests/*.test.mjs",
     "db:probe": "wrangler d1 execute commerce-local --local --config workers/commerce/wrangler.jsonc --persist-to .wrangler/state --file tests/fixtures/probe.sql",
     "smoke:ai": "node scripts/smoke-ai.mjs",
-    "verify:artifacts": "node scripts/verify-artifacts.mjs"
+    "verify:artifacts": "node scripts/verify-artifacts.mjs",
+    "db:migrate": "wrangler d1 migrations apply commerce-local --local --env \"\" --config workers/commerce/wrangler.jsonc --persist-to .wrangler/state",
+    "db:migrate:demo": "wrangler d1 migrations apply customer-service-demo --remote --env demo --config workers/commerce/wrangler.jsonc",
+    "db:seed": "node scripts/data.mjs seed",
+    "db:seed:demo": "node scripts/data.mjs seed-demo",
+    "db:verify": "node scripts/data.mjs verify",
+    "db:reset": "node scripts/data.mjs reset",
+    "fixtures:generate": "node scripts/data.mjs generate",
+    "fixtures:check": "node scripts/data.mjs check"
   },
   "dependencies": {
     "@ai-sdk/provider": "4.0.31",

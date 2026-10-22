@@ -1,6 +1,6 @@
 # Customer service agent build plan
 
-Status: complete build plan; **Milestone 1 only is implemented** following the later implementation prompt in PROMPTS.md. Milestones 2–6 remain planned. No remote resources were provisioned, nothing was deployed, and no commits were created. The unavailable screenshot was not inspected and is not a dependency. See the Milestone 1 implementation record below for the verified package choices and checks; earlier starter observations describe the original scaffold.
+Status: **Milestones 1–2 are implemented**; Milestones 3–6 remain planned. Milestone 1 proved the private transport; Milestone 2 adds canonical data, fixtures, and local/demo setup commands. The demo Workers were subsequently deployed and the deployment fix was committed before Milestone 2. This milestone has not migrated/seeded the remote database or deployed new code. Earlier implementation records describe their state at the time; the Milestone 2 record below supersedes their placeholder/setup notes.
 
 ## 1. Objective and agreed scope
 
@@ -446,7 +446,7 @@ Use Local Explorer during implementation debugging to inspect local D1 rows/bind
 | Milestone | Work and acceptance gate |
 | --- | --- |
 | 1. Platform compatibility and skeleton | Pin compatible Agents/chat/MCP/AI provider releases and lockfile; prove the SDK custom-fetch hook carries Streamable HTTP over `COMMERCE_MCP`, with no global fetch/public endpoint. Pass local auxiliary-Worker resolution/shared D1 checks, regenerated Fetcher types, signed/unsigned binding call tests, Llama tool-call smoke, and correct Vite demo binding/ingress artifact checks. No business action can execute yet. |
-| 2. Canonical data and fixtures | Apply three versioned migrations; validate constraints and six/twelve/three fixture counts. Seed twice safely; provision isolated namespaces. Local reset cannot target demo. |
+| 2. Canonical data and fixtures — implemented | Apply three versioned migrations; validate constraints and six/twelve/three fixture counts. Seed twice safely; provision isolated namespaces. Local reset cannot target demo. |
 | 3. Identity and consent boundary | Immutable persona sessions, signed MCP context, gated DO routes, action cards/expiry/revocation, and transactional acceptance. Pass forged identity, cross-owner, direct-MCP, stale approval, and session-replacement race tests before enabling mutation execution. |
 | 4. Commerce tools and UI | Register exactly eight tools with strict input/output schemas; implement owned reads, approved cancellation/address/ticket writes, safe errors, and action replay. Show no-refund cancellation notice; saved profile unchanged. |
 | 5. Refund durability | Workflow, mock ledger, logical refunds/attempts, dispatch repair, failure reconciliation, and newly approved failed retries. Pass crash matrix and concurrent/replayed refund tests with one settlement per order. |
@@ -487,3 +487,55 @@ Verification performed:
 - Independent code/security and specification/TypeScript reviews found no blocking issue. The stale starter README was replaced and the suggested actual chat/DO integration check was added.
 
 Known non-blocking build warnings: missing required demo signing secret is intentional until a later authorized deployment; the client bundle has the standard Vite chunk-size warning. Stop here for user review before starting Milestone 2.
+
+
+## 15. Milestone 2 implementation record — 2026-10-22
+
+Implemented canonical D1 storage and deterministic fixtures only. Public demo agent routes remain disabled. No customer sessions/cookies, eight commerce tools, business mutation endpoints, approval UI, mock processor execution, or refund Workflow was enabled. Milestones 3–6 remain planned. The existing deployed demo and its remote data were not changed by this implementation.
+
+### Schema and fixture changes
+
+- Added `migrations/0001_commerce.sql`, `0002_consent_and_audit.sql`, and `0003_refund_execution.sql`. They create the planned commerce, session, immutable proposal/approval, append-only audit, refund/attempt, mock processor ledger, and dispatch tables. Composite namespace/owner foreign keys prevent cross-owner child references; money uses integer EUR minor units. Partial unique indexes enforce one unresolved attempt and one settlement per logical refund. Refund/attempt/processor transition triggers prohibit terminal-state replay. The existing ChatAgent `v1` migration and probe table are preserved.
+- Added a `provisioning_state` to sessions so fixture history can be inserted only while provisioning. Session/customer and current-refund/attempt foreign-key cycles use `DEFERRABLE INITIALLY DEFERRED`, verified with real D1 batches. `data_assertions` provides a CHECK-backed assertion that aborts a batch when a validation SELECT would otherwise merely return zero rows. Initial sessions have mutations disabled.
+- Added a separate `sealed` catalog flag: deactivating a version in the future cannot reopen it for edits. Version/checksum and catalog records are immutable. Seed validates every expected payload and the complete catalog count; changed content under the same version fails instead of overwriting an installation.
+- `shared/fixtures.ts` defines all six personas, twelve orders and items, three owned support tickets, and pending/completed/failed refund histories with coherent attempt/ledger records. Amounts, statuses, fake addresses, `.test` email addresses, and fixed dates follow section 7. The pending history has one queued dispatch; no Workflow is created or run. Historical attempts are marked `fixture`, with no invented reviewer approval.
+- The trusted `provisionNamespace` helper clones the installed catalog into a new namespace in one atomic D1 batch, then marks it ready. Customer/order IDs are stable per namespace; attempt IDs/keys, receipts, evidence, and Workflow instance IDs are scoped to the namespace. A duplicate namespace is rejected rather than reset. Catalog bootstrap is required before provisioning. This helper is infrastructure for Milestone 3, not a public session API.
+- Added test-only bounded injection payloads in `tests/fixtures/injection.json` for a customer note, item name, and ticket body. Data tests prove literal storage and unchanged identity; model resistance, tool authorization, and browser rendering remain later milestone tests.
+
+### Setup and operational commands
+
+`README.md` now documents local initialization, verification, reset, fixture versioning, and explicit remote bootstrap:
+
+```bash
+npm run db:migrate
+npm run db:seed
+npm run db:verify
+# Explicitly discard local commerce namespaces only, preserving migrations/catalog/probe:
+npm run db:reset
+npm run db:seed
+```
+
+The local reference namespace contains the full six-persona dataset, is bound to Ada, and has mutations disabled. Seeding again preserves existing commerce and audit history. Reset executes dependency-ordered deletes in one batch, temporarily drops only the audit-delete guard, and restores it before commit. Local commands refuse extra flags/config overrides and refuse `CLOUDFLARE_ENV`; `getPlatformProxy` explicitly uses the local config/persistence and disables remote bindings. The reset script has no demo/remote branch.
+
+```bash
+# Explicit remote schema/catalog bootstrap, never part of ordinary deploy:
+npm run db:migrate:demo
+npm run db:seed:demo
+```
+
+Remote seed installs only the immutable catalog, not a browser or reference namespace. It uses checked-in `fixtures/seed-v1.sql`, generated from the same fixture source by `npm run fixtures:generate`; `npm run fixtures:check` detects drift and is included in CI. These remote commands were **not run**. No reset/seed endpoint was added.
+
+Both default Worker configs now explicitly bind the same `commerce-local` database ID; both demo configs retain the previously configured shared `customer-service-demo` ID. Migration directories point to the root `migrations/`. Generated local/demo types were refreshed and checked. The artifact verifier now checks the configured shared demo database rather than the obsolete unprovisioned placeholder. It still does not claim remote schema or binding smoke validation.
+
+The full suite exposed a pre-existing local development issue after deployment secrets were added to the root `.env`: Wrangler overrode the app's generated local key while Commerce kept a different one. The local Vite configuration now sets the shared ephemeral process secret before both Workers load their secrets. Build/demo behavior and committed credentials are unchanged; the actual Vite/ChatAgent integration test passes again.
+
+### Verification and review
+
+- Applied all three migrations to local D1; rerunning `npm run db:migrate` reports no pending migrations. Tests also apply them in order to fresh ephemeral D1 while preserving a pre-existing marker table.
+- Ran `npm run db:seed` twice and `npm run db:verify`: all succeeded. Existing reference data remained intact. Reset was exercised only in isolated test databases, not against developer or demo data.
+- `npm run types`, `npm run types:check`, `npm run check`, `npm run fixtures:check`, `npm test`, `npm run build:demo`, and `npm run verify:artifacts` passed. The full suite has 26 passing tests, including 13 data tests.
+- Data tests cover exact fixture counts and refund history, repeated catalog SQL installation, checksum mismatch rejection, preserved mutations, namespace ownership/isolation and distinct keys, money/item constraints, duplicate logical refunds, one unresolved attempt/settlement, rollback on late provisioning failure, immutable identity/payload/audit, inactive/replayed consent, terminal transitions, missing processor evidence, local reset preservation, and refusal of remote/demo reset arguments. Existing private MCP/fake-model/Vite chat tests remain green.
+- Independent standards and specification reviews completed. Standards review identified a missing-ledger validation gap; the consistency query now explicitly rejects missing processor evidence and has a regression test. Specification review identified the missing bounded injection fixtures; those are now included. Follow-up review found no remaining actionable issues.
+- Current official D1 migration, batch transaction, foreign-key, and Wrangler API documentation was consulted before implementation. The known build-only missing Commerce signing secret and client chunk-size warnings remain non-blocking; deployment still supplies the root secret explicitly to both Workers.
+
+`PROMPTS.md` records the original interrupted Milestone 2 prompt and its repeated instruction as entries 20–21 in order. `AGENTS.md` now preserves the requested rule to append subsequent user prompts verbatim and chronologically. No commit, push, deployment, remote migration, or remote seed was performed for Milestone 2.

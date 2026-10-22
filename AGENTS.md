@@ -1,5 +1,12 @@
 # Cloudflare Workers
 
+## Prompt history
+
+Append every subsequent user prompt verbatim to `PROMPTS.md` in its existing numbered,
+chronological order. Preserve earlier entries, record repeated prompts separately, and
+exclude machine-generated environment/page metadata. Keep this practice for follow-up
+work as requested in the Milestone 2 prompts.
+
 STOP. Your knowledge of Cloudflare Workers APIs and limits may be outdated. Always retrieve current documentation before any Workers, KV, R2, D1, Durable Objects, Queues, Vectorize, AI, or Agents SDK task.
 
 ## Docs

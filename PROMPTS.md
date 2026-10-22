@@ -330,3 +330,21 @@ Keep signed MCP request-context validation in the test setup. Missing or invalid
 
 Append this prompt verbatim to PROMPTS.md. Do not provision Cloudflare resources, deploy, add real credentials, or commit changes. Run the relevant checks and report the files changed, commands/tests run, results, and any compatibility issues. Stop after Milestone 1; I’ll review it before asking you to continue.
 ```
+
+## 20. User — implement Milestone 2 (interrupted before implementation)
+
+```text
+Please implement milestone 2. Document how to seed data and edit the PLAN.md file with what changed. Document this prompt and all following prompts in PROMPTS.md and maintain the existing chronological order
+```
+
+## 21. User — implement Milestone 2 (repeated instruction)
+
+```text
+Please implement milestone 2. Document how to seed data and edit the PLAN.md file with what changed. Document this prompt and all following prompts in PROMPTS.md and maintain the existing chronological order
+```
+
+## 22. User — push and deploy Milestone 2, migrate, seed, and verify
+
+```text
+Ok can you push this, then run deploy, migrate, seed & verify. Document this prompt and all following prompts in md file
+```
