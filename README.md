@@ -98,9 +98,13 @@ Authorization with signed context, strips cookies, and rejects redirects/alterna
 `npm run verify:artifacts` checks the emitted binding target, private Commerce ingress,
 shared placeholder database, required secret declaration, and absence of local keys or
 refund Workflows. This validates build configuration, **not deployed binding resolution**.
-A future deployment must replace D1 placeholders, securely supply `MCP_CONTEXT_KEY` in both
-Workers, and deploy Commerce before the app. None of those actions is part of this milestone.
-Builds warn about the intentionally missing demo secret; missing runtime secrets fail closed.
+To deploy, configure the demo D1 database in both Worker configs and put `MCP_CONTEXT_KEY`
+in the root `.env` file. Run `npm run deploy` to build with `CLOUDFLARE_ENV=demo`, deploy
+Commerce first, and then deploy the app. Both deploy commands read the same `.env` file
+so the Workers share the signing key. Auxiliary Workers must be deployed individually.
+Selecting `--env demo` only after a default Vite build does not select the demo build configuration.
+The Commerce build may warn that `MCP_CONTEXT_KEY` is missing because it does not read the
+root `.env`; deployment supplies it through `--secrets-file .env`. Missing runtime secrets fail closed.
 
 ## Verified package/API choices
 

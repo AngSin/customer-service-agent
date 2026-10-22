@@ -13,7 +13,7 @@
   "scripts": {
     "dev": "vite dev",
     "start": "vite dev",
-    "deploy": "vite build && wrangler deploy --secrets-file .env --env demo",
+    "deploy": "npm run build:demo && wrangler deploy --config dist/customer_service_commerce/wrangler.json --secrets-file .env && wrangler deploy --config dist/customer_service_agent/wrangler.json --secrets-file .env",
     "types": "node scripts/types.mjs",
     "format": "oxfmt --write .",
     "lint": "oxlint src/ shared/ workers/commerce/src/ tests/harness.ts scripts/ tests/*.mjs",
