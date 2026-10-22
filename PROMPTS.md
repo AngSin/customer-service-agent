@@ -502,3 +502,9 @@ ok please deploy it, i see no new migration - so db remains the same
 ```text
 can confirmed it works, please commit & push this. now tell me about milestone 5, what is the scope?
 ```
+
+## 39. User — repeat commit/push confirmation and Milestone 5 scope request
+
+```text
+can confirmed it works, please commit & push this. now tell me about milestone 5, what is the scope?
+```
