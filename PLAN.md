@@ -1,6 +1,6 @@
 # Customer service agent build plan
 
-Status: **Milestones 1–2 are implemented**; Milestones 3–6 remain planned. Milestone 1 proved the private transport; Milestone 2 adds canonical data, fixtures, and local/demo setup commands. The demo Workers were subsequently deployed and the deployment fix was committed before Milestone 2. This milestone has not migrated/seeded the remote database or deployed new code. Earlier implementation records describe their state at the time; the Milestone 2 record below supersedes their placeholder/setup notes.
+Status: **Milestones 1–2 are implemented**; Milestones 3–6 remain planned. Milestone 1 proved the private transport; Milestone 2 adds canonical data, fixtures, and local/demo setup commands. The demo Workers were subsequently deployed and the deployment fix was committed before Milestone 2. Milestone 2 was subsequently pushed, deployed, migrated, seeded, and verified remotely at the user’s request; see section 16. Earlier implementation records describe their state at the time; the Milestone 2 record below supersedes their placeholder/setup notes.
 
 ## 1. Objective and agreed scope
 
@@ -539,3 +539,16 @@ The full suite exposed a pre-existing local development issue after deployment s
 - Current official D1 migration, batch transaction, foreign-key, and Wrangler API documentation was consulted before implementation. The known build-only missing Commerce signing secret and client chunk-size warnings remain non-blocking; deployment still supplies the root secret explicitly to both Workers.
 
 `PROMPTS.md` records the original interrupted Milestone 2 prompt and its repeated instruction as entries 20–21 in order. `AGENTS.md` now preserves the requested rule to append subsequent user prompts verbatim and chronologically. No commit, push, deployment, remote migration, or remote seed was performed for Milestone 2.
+
+
+## 16. Milestone 2 demo rollout — 2026-10-22
+
+Following the user’s prompt recorded in PROMPTS.md entry 22, committed and pushed Milestone 2 as `233a23b` (`Implement Milestone 2 canonical data and isolated fixtures`) to `origin/main`, then completed the requested operational sequence:
+
+1. `npm run deploy`: built the demo configuration and deployed Commerce before the app, supplying the shared `.env` secret to both. Commerce version: `108e3ba4-2260-4797-909e-1db450754bd8`. App version: `ed8d3922-aa39-42c8-b76d-c64c38e16642`.
+2. `npm run db:migrate:demo`: successfully applied all three migrations to `customer-service-demo` (`882ea69f-71c1-484d-8e4e-48f6cc09c209`).
+3. `npm run db:seed:demo`: successfully installed immutable fixture catalog `v1` using the generated SQL (90 queries). No reset was run.
+4. Remote read-only verification through Wrangler: checked all three migration names, the exact expected catalog checksum, `active=1`, `sealed=1`, and all 43 catalog payloads against `shared/fixtures.ts`. Counts are six customers, twelve orders, twelve items, three tickets, three refunds, three attempts, three processor operations, and one queued dispatch. `PRAGMA foreign_key_check` returned no violations.
+5. `npm run verify:artifacts` passed. The deployed app at https://customer-service-agent-demo.customer-service-lisbon.workers.dev returned HTTP 200.
+
+There are zero remote session namespaces after bootstrap. These are **catalog records**, not live customer/order rows in a provisioned session. The Milestone 3 session endpoint will clone this catalog when issuing a session; no browser credential was created and no Workflow was started. Public agent routes remain disabled pending session authorization. The 26-test implementation verification remains recorded in section 15; this rollout changed only prompt/operational documentation after the implementation commit.

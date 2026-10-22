@@ -92,7 +92,9 @@ npm run db:seed:demo
 
 Remote seeding installs only the catalog; it creates no reference/browser session and
 does not reset existing commerce. Deploys never seed or reset data. These remote commands
-were added and documented in Milestone 2; they were not executed as part of its checks.
+were added and documented in Milestone 2. They were subsequently run successfully on
+2026-10-22 at the user’s request; see the rollout record in `PLAN.md` section 16.
+The remote database contains the sealed catalog and no session namespaces yet.
 
 `shared/fixtures.ts` is the source of fixture values. `fixtures/seed-v1.sql` is its checked-in
 catalog SQL for the explicit remote bootstrap. Run `npm run fixtures:generate` when
