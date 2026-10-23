@@ -673,3 +673,24 @@ yes
 ```text
 looks good, please commit and push this
 ```
+
+## 64. User — add bearer-authenticated public MCP while preserving the private binding
+
+```text
+ok let's do this but use a Bearer token for authentication, tell me what the value should be for the publicly reachable endpoint. for the private binding, keep everything the same (so it continues to work as is)
+```
+
+## 65. User — confirm public MCP identity and read-only scope
+
+Responses to the public-endpoint clarification questions, in order:
+
+```text
+Ada only, in a separate session (recommended)
+Read-only tools first (recommended)
+```
+
+## 66. User — commit and push the deployed public MCP endpoint
+
+```text
+thanks, please commit and push this
+```

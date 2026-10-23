@@ -18,6 +18,70 @@ A request-scoped client uses Streamable HTTP exclusively through `env.COMMERCE_M
 there is no public-network fallback. The legacy `milestone_ping` tool remains available
 only to the separate local transport-test context, not the session business catalog.
 
+## Public MCP endpoint
+
+The application Worker also serves Streamable HTTP MCP at
+`https://customer-service-agent-demo.customer-service-lisbon.workers.dev/mcp`.
+Configure an MCP client with that URL and an `Authorization: Bearer <token>`
+header on every request. This uses a manually configured bearer secret, without
+an OAuth discovery/login flow; the client must support custom headers.
+
+The public catalog contains `get_customer_profile`, `list_customer_orders`,
+`get_order`, and `get_refund_status`. Its identity is fixed to **Ada** in a
+separate, mutation-disabled namespace shared by holders of this token. It resets
+at midnight UTC. Browser sessions and their approvals remain separate; a public
+caller cannot choose a different customer, cancel an order, or request a refund.
+For example, ask a connected assistant: “List my previous orders.” It should
+read `ord_101` and `ord_102`.
+
+`PUBLIC_MCP_TOKEN` is an optional **application Worker secret**, consisting of
+32 cryptographically random bytes encoded as 64 lowercase hex characters. Its
+absence disables `/mcp` with 404. Never use `MCP_CONTEXT_KEY` as the public token.
+The deployed token is stored locally in the ignored, permission-restricted
+`.wrangler/public-mcp-token.txt`; no actual token belongs in source or these docs.
+To create or rotate a token:
+
+```sh
+node --input-type=module <<'JS'
+import { randomBytes } from 'node:crypto';
+import { mkdirSync, writeFileSync, chmodSync } from 'node:fs';
+mkdirSync('.wrangler', { recursive: true });
+const token = randomBytes(32).toString('hex');
+for (const [path, contents] of [
+  ['.wrangler/public-mcp-token.txt', token + '\n'],
+  ['.wrangler/public-mcp-secrets.json', JSON.stringify({ PUBLIC_MCP_TOKEN: token })]
+]) {
+  writeFileSync(path, contents, { mode: 0o600 });
+  chmodSync(path, 0o600);
+}
+JS
+npm run build:demo
+npm run verify:artifacts
+npx wrangler deploy --config dist/customer_service_agent/wrangler.json --secrets-file .wrangler/public-mcp-secrets.json
+npm run smoke:public-mcp
+```
+
+This deploys only the application Worker and adds/replaces only its public
+secret. Wrangler deployment secrets are additive, so later regular deployments
+retain it. Rotating it invalidates the old public credential and selects fresh
+public data; the private signing key is unaffected. To disable the endpoint,
+delete `PUBLIC_MCP_TOKEN` from the application Worker. For local use, add that
+secret to the root `.dev.vars` alongside the existing local settings.
+
+The facade invokes the existing signed `COMMERCE_MCP` service-binding client.
+Commerce has no new public route, secret or auth mode, and still enforces ownership.
+Public requests are limited to 180/minute per credential and the existing
+IP budget; tool calls are limited to 160/day per credential and share the
+2,000/day global tool budget. POST bodies are capped at 16 KiB, cross-origin
+browser access is disabled, and responses are not cached. No migration or
+manual seeding is needed: the first authorized read atomically copies the
+existing fixture catalog into the daily public namespace.
+
+`npm run smoke:public-mcp` reads the ignored token file and verifies authentication,
+the four-tool catalog, Ada reads and cross-customer denial. Override
+`PUBLIC_MCP_URL` and `PUBLIC_MCP_TOKEN_FILE` to test another deployment. The
+existing `npm run smoke:demo` checks browser sessions and private MCP separately.
+
 ## Try Milestone 4 locally
 
 After the setup below, choose **Ada** and click **Start session**. Natural-language examples:

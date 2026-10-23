@@ -6,6 +6,7 @@ import {
   UsageLimit
 } from "./usage";
 import { maintenance } from "./maintenance";
+import { publicMcp } from "./public-mcp";
 import { AIChatAgent, type OnChatMessageOptions } from "@cloudflare/ai-chat";
 import { routeAgentRequest, type AgentContext } from "agents";
 import { z } from "zod";
@@ -256,8 +257,9 @@ export default {
   ) {
     ctx.waitUntil(maintenance(env));
   },
-  async fetch(request: Request, env: Env) {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext) {
     const path = new URL(request.url).pathname;
+    if (path === "/mcp") return publicMcp(request, env, ctx);
     if (
       env.APP_STAGE === "local" &&
       env.MODEL_MODE === "workers-ai" &&

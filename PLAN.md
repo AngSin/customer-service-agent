@@ -1003,3 +1003,36 @@ with the existing demo deployment script. No migration, seeding or reset was nee
 - Updated current technical/plan status and appended prompt 60 chronologically;
   subsequent prompt entries from concurrent documentation work are preserved.
   No commit or push of this UI follow-up was requested.
+
+## 30. Bearer-authenticated public MCP
+
+- Added an application `/mcp` Streamable HTTP facade, authenticated on every
+  request with a separate optional `PUBLIC_MCP_TOKEN` secret. Missing secret
+  disables the endpoint. The private signing key, client, Commerce Worker and
+  `COMMERCE_MCP` binding are unchanged.
+- As confirmed by the user, the public token is limited to Ada in a separate
+  read-only namespace and four lookup tools. All public callers with that token
+  share this namespace, which resets at midnight UTC. No write tools, browser
+  session cookies, approvals or caller-selected identities are exposed.
+- Reused existing namespace provisioning and unique constraints for atomic,
+  concurrent first reads. No migration or manual seed is needed. Public HTTP
+  and tool budgets, bounded request bodies, origin checks and no-store responses
+  protect the facade while existing private ownership checks remain authoritative.
+- Added real MCP-client integration coverage for bearer denial, cross-customer
+  denial, extra identity arguments, write-tool denial, concurrent provisioning,
+  body limits and HTTP quotas. All **85 tests passed**; type generation,
+  formatting/lint/typecheck, demo build, artifact checks and dry run passed.
+- Added `npm run smoke:public-mcp`, token provisioning/rotation and client setup
+  instructions in TECH.md. Actual credentials live only in ignored protected
+  local files and Cloudflare secrets. Prompts 64–65 recorded chronologically.
+- Deployed only the application Worker to demo, version
+  `5e8b4808-b6ae-4a60-adc4-959e6dc47de9`, with the new public secret. Commerce
+  remains on `078e07fb-b72c-4395-87a2-5b52df2de970`; its code/config/key were
+  not redeployed or changed. No migration, reseed or reset was run.
+- Live `smoke:public-mcp` passed missing-bearer denial, the four-tool catalog,
+  Ada profile/orders and cross-customer denial. Live `smoke:demo` independently
+  passed browser session issuance, signed private owned reads and anonymous
+  denial. No model inference or mutation approval was used in these smoke tests.
+- Generated runtime types are unchanged and `types:check` passed. Code and
+  security reviews approved the change. Prompt 66 requests committing and
+  pushing this deployed change; the prompt is recorded chronologically.

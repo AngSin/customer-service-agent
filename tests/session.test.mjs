@@ -8,9 +8,15 @@ import { builtinModules } from "node:module";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
 import { unstable_splitSqlQuery } from "wrangler";
 import { installFixtures, sha256 } from "../shared/fixtures.ts";
+import {
+  Client,
+  StreamableHTTPClientTransport
+} from "@modelcontextprotocol/client";
+import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/client/validators/cf-worker";
 let mf, db, app, harness, directory;
 const origin = "https://localhost";
 const secret = crypto.randomUUID().repeat(2);
+const publicToken = "ab".repeat(32); // Disposable test credential, app only.
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), "csa-session-"));
   const workers = [];
@@ -60,7 +66,8 @@ before(async () => {
         APP_STAGE: "demo",
         MODEL_MODE: "fake",
         MCP_AUDIENCE: "commerce-mcp:demo",
-        MCP_CONTEXT_KEY: secret
+        MCP_CONTEXT_KEY: secret,
+        ...(name === "app" ? { PUBLIC_MCP_TOKEN: publicToken } : {})
       },
       d1Databases: { DB: "sessions" },
       serviceBindings: name === "commerce" ? {} : { COMMERCE_MCP: "commerce" },
@@ -118,6 +125,138 @@ const run = (sql, ...values) =>
     .prepare(sql)
     .bind(...values)
     .run();
+test("public MCP requires its separate bearer on every request", async () => {
+  for (const authorization of [
+    undefined,
+    `Bearer ${secret}`,
+    `Bearer ${"cd".repeat(32)}`
+  ]) {
+    const response = await request(
+      "/mcp",
+      "",
+      { jsonrpc: "2.0", id: 1, method: "tools/list" },
+      authorization ? { Authorization: authorization } : {}
+    );
+    assert.equal(response.status, 401);
+    assert.match(response.headers.get("WWW-Authenticate"), /^Bearer/);
+    assert.equal(response.headers.get("Access-Control-Allow-Origin"), null);
+  }
+  const commerce = await mf.getWorker("commerce");
+  assert.equal(
+    (
+      await commerce.fetch("https://commerce-mcp.internal/mcp", {
+        headers: { Authorization: `Bearer ${publicToken}` }
+      })
+    ).status,
+    401
+  );
+});
+
+test("public MCP forwards only Ada reads over the unchanged private binding", async () => {
+  const client = new Client(
+    { name: "external-test", version: "1.0.0" },
+    { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() }
+  );
+  await client.connect(
+    new StreamableHTTPClientTransport(new URL(`${origin}/mcp`), {
+      fetch: (input, init) => app.fetch(input, init),
+      requestInit: { headers: { Authorization: `Bearer ${publicToken}` } }
+    })
+  );
+  try {
+    const catalog = await client.listTools();
+    assert.deepEqual(catalog.tools.map((t) => t.name).sort(), [
+      "get_customer_profile",
+      "get_order",
+      "get_refund_status",
+      "list_customer_orders"
+    ]);
+    // Concurrent first reads must share one fully provisioned namespace.
+    const profiles = await Promise.all(
+      Array.from({ length: 4 }, () =>
+        client.callTool({ name: "get_customer_profile", arguments: {} })
+      )
+    );
+    for (const profile of profiles)
+      assert.equal(profile.structuredContent.data.customer.display_name, "Ada");
+    const orders = await client.callTool({
+      name: "list_customer_orders",
+      arguments: {}
+    });
+    assert.deepEqual(
+      orders.structuredContent.data.orders.map((o) => o.order_id).sort(),
+      ["ord_101", "ord_102"]
+    );
+    const other = await client.callTool({
+      name: "get_order",
+      arguments: { order_id: "ord_201" }
+    });
+    assert.equal(other.structuredContent.error.code, "NOT_FOUND");
+    const injected = await client.callTool({
+      name: "get_customer_profile",
+      arguments: { customer_id: "cus_bram" }
+    });
+    assert.equal(injected.isError, true);
+    await assert.rejects(
+      client.callTool({
+        name: "cancel_order",
+        arguments: { order_id: "ord_101" }
+      }),
+      /Tool cancel_order not found/
+    );
+    const namespaces = await rows(
+      "SELECT ns,mutation_enabled FROM demo_sessions WHERE ns LIKE 'public_%'"
+    );
+    assert.equal(namespaces.length, 1);
+    assert.equal(namespaces[0].mutation_enabled, 0);
+    assert.equal(
+      (
+        await rows(
+          "SELECT * FROM mutation_actions WHERE ns=?",
+          namespaces[0].ns
+        )
+      ).length,
+      0
+    );
+    const limited = await request(
+      "/mcp",
+      "",
+      { jsonrpc: "2.0", id: 8, method: "tools/list" },
+      {
+        Authorization: `Bearer ${publicToken}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream"
+      }
+    );
+    assert.equal(limited.status, 200);
+    assert.equal(limited.headers.get("Cache-Control"), "no-store");
+  } finally {
+    await client.close();
+  }
+});
+
+test("public MCP bounds bodies and enforces credential request limits", async () => {
+  const authorization = { Authorization: `Bearer ${publicToken}` };
+  const tooLarge = await request(
+    "/mcp",
+    "",
+    { padding: "x".repeat(17000) },
+    authorization
+  );
+  assert.equal(tooLarge.status, 413);
+  await run(
+    "UPDATE usage_counters SET used=180 WHERE bucket=?",
+    `public-mcp-http:${await sha256(publicToken)}`
+  );
+  const response = await request(
+    "/mcp",
+    "",
+    { jsonrpc: "2.0", id: 1, method: "tools/list" },
+    authorization
+  );
+  assert.equal(response.status, 429);
+  assert.ok(Number(response.headers.get("Retry-After")) > 0);
+});
 async function request(path, jar = "", body, headers = {}) {
   return app.fetch(`${origin}${path}`, {
     method: body ? "POST" : "GET",

@@ -35,6 +35,7 @@
     "fixtures:generate": "node scripts/data.mjs generate",
     "fixtures:check": "node scripts/data.mjs check",
     "smoke:demo": "node scripts/smoke-demo.mjs",
+    "smoke:public-mcp": "node scripts/smoke-public-mcp.mjs",
     "ops:demo": "node scripts/status.mjs"
   },
   "dependencies": {

@@ -4,6 +4,9 @@ const read = async (path) => JSON.parse(await readFile(path, "utf8"));
 const app = await read("dist/customer_service_agent/wrangler.json");
 const commerce = await read("dist/customer_service_commerce/wrangler.json");
 assert.equal(app.name, "customer-service-agent-demo");
+assert.ok(app.assets.run_worker_first.includes("/mcp"));
+assert.ok(!("PUBLIC_MCP_TOKEN" in app.vars));
+assert.ok(!("PUBLIC_MCP_TOKEN" in commerce.vars));
 assert.deepEqual(app.services, [
   { binding: "COMMERCE_MCP", service: "customer-service-commerce-demo" }
 ]);
