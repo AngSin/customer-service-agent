@@ -33,7 +33,9 @@
     "db:verify": "node scripts/data.mjs verify",
     "db:reset": "node scripts/data.mjs reset",
     "fixtures:generate": "node scripts/data.mjs generate",
-    "fixtures:check": "node scripts/data.mjs check"
+    "fixtures:check": "node scripts/data.mjs check",
+    "smoke:demo": "node scripts/smoke-demo.mjs",
+    "ops:demo": "node scripts/status.mjs"
   },
   "dependencies": {
     "@ai-sdk/provider": "4.0.31",

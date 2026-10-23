@@ -656,3 +656,25 @@ test("customer-name migration preserves v1, custom recipients, and existing rela
     [{ display_name: "Brad" }]
   );
 });
+
+test("release-control upgrade preserves installed commerce and defaults retirement to null", async () => {
+  const upgrade = await mf.getD1Database("UPGRADE");
+  const rows = async (sql) => (await upgrade.prepare(sql).all()).results;
+  const before = await rows("SELECT * FROM orders ORDER BY ns,order_id");
+  for (const file of ["0006_refund_attention.sql", "0007_release_controls.sql"])
+    await executeBatch(
+      upgrade,
+      sqlStatements(await readFile(`migrations/${file}`, "utf8"))
+    );
+  assert.deepEqual(
+    await rows("SELECT * FROM orders ORDER BY ns,order_id"),
+    before
+  );
+  assert.ok(
+    (await rows("SELECT chat_retired_at FROM demo_sessions")).every(
+      (r) => r.chat_retired_at === null
+    )
+  );
+  assert.equal((await rows("SELECT count(*) n FROM usage_counters"))[0].n, 0);
+  assert.equal((await rows("PRAGMA foreign_key_check")).length, 0);
+});

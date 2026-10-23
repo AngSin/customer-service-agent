@@ -1,3 +1,4 @@
+import { requestBudget, sessionBudget, UsageLimit } from "./usage";
 import { z } from "zod";
 import {
   authenticate,
@@ -34,6 +35,12 @@ export function boundaryResponse(
   });
 }
 export function boundaryFailure(error: unknown) {
+  if (error instanceof UsageLimit)
+    return boundaryResponse(
+      { error: { code: error.code, retryAfter: error.retryAfter } },
+      429,
+      { "Retry-After": String(error.retryAfter) }
+    );
   if (error instanceof BoundaryError)
     return boundaryResponse({ error: { code: error.code } }, error.status);
   if (error instanceof z.ZodError)
@@ -48,6 +55,7 @@ export async function boundaryApi(
   const path = new URL(request.url).pathname;
   if (!path.startsWith("/api/")) return null;
   try {
+    const ipKey = await requestBudget(request, env);
     if (request.method === "GET" && path === "/api/session") {
       if (request.headers.has("Origin")) requireOrigin(request);
       let session = null;
@@ -82,6 +90,7 @@ export async function boundaryApi(
         requestKey: z.uuid().optional()
       });
       const body = schema.parse(await jsonBody(request));
+      await sessionBudget(env.DB, ipKey);
       let result;
       if (replacement) {
         if (!body.requestKey) throw new BoundaryError("INVALID_ARGUMENT", 400);

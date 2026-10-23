@@ -1,3 +1,5 @@
+import { budgets, consumeBudget, UsageLimit } from "./usage";
+import { sessionByHash } from "../shared/session";
 import { createAI } from "agents/models/ai-sdk";
 import { MockLanguageModelV4 } from "ai/test";
 import { simulateReadableStream, tool, dynamicTool } from "ai";
@@ -148,6 +150,7 @@ export function milestoneTools(env: Env, sessionHash?: string) {
 }
 
 export function commerceTools(env: Env, sessionHash: string) {
+  let calls = 0;
   return Object.fromEntries(
     (Object.keys(inputs) as ToolName[]).map((name) => [
       name,
@@ -156,18 +159,32 @@ export function commerceTools(env: Env, sessionHash: string) {
         inputSchema: inputs[name],
         execute: async (args) => {
           try {
+            if (++calls > 20) throw new UsageLimit(60);
+            const session = await sessionByHash(env.DB, sessionHash, true);
+            await consumeBudget(env.DB, `tools:${session.ns}`, {
+              ...budgets.toolsSession,
+              expiresAt: Math.ceil(
+                new Date(session.expires_at).getTime() / 1000
+              )
+            });
+            await consumeBudget(env.DB, "tools-global", budgets.toolsDaily);
             return await callCommerce(
               { ...env, session: { db: env.DB, tokenHash: sessionHash } },
               name,
               args
             );
-          } catch {
+          } catch (error) {
             return {
               ok: false,
               error: {
-                code: "TEMPORARILY_UNAVAILABLE",
+                code:
+                  error instanceof UsageLimit
+                    ? "USAGE_LIMIT"
+                    : "TEMPORARILY_UNAVAILABLE",
                 message:
-                  "The shop service is temporarily unavailable. Please retry.",
+                  error instanceof UsageLimit
+                    ? `Demo tool usage limit reached. Try again in ${error.retryAfter} seconds.`
+                    : "The shop service is temporarily unavailable. Please retry.",
                 retryable: true
               },
               request_id: crypto.randomUUID()

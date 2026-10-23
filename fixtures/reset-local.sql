@@ -1,5 +1,6 @@
 -- Run only through npm run db:reset. Keep migrations, catalog, and probe marker.
 DROP TRIGGER audit_no_delete;
+DELETE FROM usage_counters;
 DELETE FROM session_replacements;
 DELETE FROM audit_events;
 DELETE FROM workflow_dispatches;

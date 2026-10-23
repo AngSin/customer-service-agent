@@ -4,18 +4,34 @@
   "main": "src/server.ts",
   "compatibility_date": "2026-06-11",
   "compatibility_flags": ["nodejs_compat"],
-  "ai": { "binding": "AI", "remote": true },
+  "ai": {
+    "binding": "AI",
+    "remote": true
+  },
   "assets": {
     "directory": "./public",
     "not_found_handling": "single-page-application",
     "run_worker_first": ["/agents/*", "/api/*"]
   },
   "durable_objects": {
-    "bindings": [{ "class_name": "ChatAgent", "name": "ChatAgent" }]
+    "bindings": [
+      {
+        "class_name": "ChatAgent",
+        "name": "ChatAgent"
+      }
+    ]
   },
-  "migrations": [{ "new_sqlite_classes": ["ChatAgent"], "tag": "v1" }],
+  "migrations": [
+    {
+      "new_sqlite_classes": ["ChatAgent"],
+      "tag": "v1"
+    }
+  ],
   "services": [
-    { "binding": "COMMERCE_MCP", "service": "customer-service-commerce" }
+    {
+      "binding": "COMMERCE_MCP",
+      "service": "customer-service-commerce"
+    }
   ],
   "d1_databases": [
     {
@@ -30,15 +46,35 @@
     "MODEL_MODE": "fake",
     "MCP_AUDIENCE": "commerce-mcp:local"
   },
-  "secrets": { "required": ["MCP_CONTEXT_KEY"] },
-  "observability": { "enabled": true },
+  "secrets": {
+    "required": ["MCP_CONTEXT_KEY"]
+  },
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.01
+    }
+  },
   "upload_source_maps": true,
   "env": {
     "demo": {
       "name": "customer-service-agent-demo",
-      "ai": { "binding": "AI", "remote": true },
+      "ai": {
+        "binding": "AI",
+        "remote": true
+      },
       "durable_objects": {
-        "bindings": [{ "class_name": "ChatAgent", "name": "ChatAgent" }]
+        "bindings": [
+          {
+            "class_name": "ChatAgent",
+            "name": "ChatAgent"
+          }
+        ]
       },
       "services": [
         {
@@ -59,7 +95,15 @@
         "MODEL_MODE": "workers-ai",
         "MCP_AUDIENCE": "commerce-mcp:demo"
       },
-      "secrets": { "required": ["MCP_CONTEXT_KEY"] }
+      "secrets": {
+        "required": ["MCP_CONTEXT_KEY"]
+      },
+      "triggers": {
+        "crons": ["*/15 * * * *"]
+      }
     }
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
   }
 }

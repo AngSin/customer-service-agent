@@ -31,6 +31,11 @@ for (const config of [app, commerce]) {
   );
   assert.ok(config.secrets.required.includes("MCP_CONTEXT_KEY"));
 }
+assert.deepEqual(app.triggers.crons, ["*/15 * * * *"]);
+for (const config of [app, commerce]) {
+  assert.equal(config.observability.enabled, true);
+  assert.equal(config.observability.traces.enabled, true);
+}
 assert.equal(app.workflows.length, 0);
 assert.deepEqual(commerce.workflows, [
   {

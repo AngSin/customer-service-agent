@@ -557,3 +557,39 @@ i've attached a screenshot of the chat, the approve button appears below hte cha
 ```text
 pls also deploy this and commit & push this
 ```
+
+## 45. User — explain Milestone 6 scope
+
+```text
+now please tell me the scope for milestone 6
+```
+
+## 46. User — clarify rate limiting and Llama costs
+
+```text
+why do we need rate limiting, i thought llama model is free to use
+```
+
+## 47. User — implement Milestone 6
+
+```text
+ok got it, please implement milestone 6
+```
+
+## 48. User — explain why Milestone 6 needs a migration
+
+```text
+please summarise why a migration is needed
+```
+
+## 49. User — migrate and deploy Milestone 6
+
+```text
+ok noted, please migrate, then deploy the changes
+```
+
+## 50. User — commit and push Milestone 6
+
+```text
+please commit and push this
+```

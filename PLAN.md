@@ -1,6 +1,6 @@
 # Customer service agent build plan
 
-Status: **Milestones 1–5 are implemented and deployed**, including migration 0006 and the full-width message composer. Milestone 6 remains planned. See sections 18–25 for implementation and rollout records. Historical records describe their state at the time.
+Status: **Milestones 1–6 are implemented and deployed**, including migration 0007, usage controls and chat-maintenance scheduling. The optional protected GitHub deployment path still needs external repository environment configuration. See sections 18–27 for implementation and rollout records. Historical records describe their state at the time.
 
 ## 1. Objective and agreed scope
 
@@ -450,7 +450,7 @@ Use Local Explorer during implementation debugging to inspect local D1 rows/bind
 | 3. Identity and consent boundary — implemented | Immutable persona sessions, signed MCP context, gated DO routes, action cards/expiry/revocation, and transactional acceptance. Pass forged identity, cross-owner, direct-MCP, stale approval, and session-replacement race tests before enabling mutation execution. |
 | 4. Commerce tools and UI — implemented | Register exactly eight tools with strict input/output schemas; implement owned reads, approved cancellation/address/ticket writes, safe errors, and action replay. Show no-refund cancellation notice; saved profile unchanged. |
 | 5. Refund durability — implemented | Workflow, mock ledger, logical refunds/attempts, dispatch repair, failure reconciliation, and newly approved failed retries. Pass crash matrix and concurrent/replayed refund tests with one settlement per order. |
-| 6. Reviewer release | Wrangler configs/types, protected GitHub Actions path, explicit bootstrap, bounded usage, deterministic walkthroughs, complete tests and operational notes. Demo app binding resolves to the private `customer-service-commerce-demo`; app-origin signed MCP smoke succeeds, unsigned context fails in the internal harness, and public commerce ingress remains disabled. Re-deploy preserves commerce; accepted Workflow continues; reviewer can reproduce every scenario in a fresh session. |
+| 6. Reviewer release — implemented locally | Wrangler configs/types, protected GitHub Actions path, explicit bootstrap, bounded usage, deterministic walkthroughs, complete tests and operational notes. Demo app binding resolves to the private `customer-service-commerce-demo`; app-origin signed MCP smoke succeeds, unsigned context fails in the internal harness, and public commerce ingress remains disabled. Re-deploy preserves commerce; accepted Workflow continues; reviewer can reproduce every scenario in a fresh session. |
 
 ## 13. Risks and remaining implementation checks
 
@@ -838,3 +838,116 @@ exactly one successful settlement. Live UI screenshot: `.wrangler/deployed-compo
   reseeding was needed; migration 0006 was applied during the earlier M5 rollout.
 - Prompt 44 appended chronologically. This publication includes the previously
   uncommitted M5 refund workflow, migration 0006, composer, and approval-card update.
+
+
+## 26. Milestone 6 implementation record
+
+Implemented reviewer-release controls, documentation and a guarded deployment path.
+The deployed demo remains on the prior M5/approval-card release. No remote migration,
+deployment, repository settings, secrets, commit or push was performed in this task.
+User prompts 45–47 are appended chronologically to PROMPTS.md.
+
+### Usage and retention
+
+- Migration `0007_release_controls.sql` adds exact atomic D1 admission counters,
+  expiry indexes and `demo_sessions.chat_retired_at`; existing commerce and immutable
+  fixture/audit records are preserved. Apply before deploying M6. Local reset also
+  clears local admission counters; no remote reset path was added.
+- Fixed server-time windows: 180 API/agent HTTP requests per IP/minute; 10 session
+  requests per IP/hour and 200 globally/day; 12 chat submissions per session/minute,
+  40 per session lifetime and 500 globally/day; 120 socket frames/session/minute.
+  Identity-switch denials consume chat admission before writing audit events.
+- Model runs, including SDK recovery, have a separate 500/day global budget; each
+  has five steps, 512 output tokens per step, zero provider retries and a 60-second
+  deadline. Model history keeps up to 12 complete UI messages, dropping oldest
+  while serialized history exceeds 24,000 characters. User text totals 4,000 chars.
+- Model tool execution has a shared 20-call/run cap before awaiting, plus atomic
+  160-call/session-lifetime and 2,000-call/global-day budgets before private MCP.
+  Polling and accepted refund repair remain separate from model tool admission.
+- Daily secret-salted IP hashes avoid retaining raw IPs. API 429 responses include
+  Retry-After; socket denial emits a visible cooldown notice and terminal skipped
+  frame. Polling preserves quota messages. Later failed work may conservatively
+  consume reservations. These controls do not guarantee a free-tier spend cap.
+- App maintenance runs every 15 minutes, deleting at most 500 expired counters and
+  retiring at most 20 chat histories more than seven days past session expiry.
+  Namespace-level pending refunds/nonterminal attempts/accepted unfinished actions
+  exclude cleanup; the DO rechecks before deleting persisted messages. The pinned
+  SDK requires explicit stale-row deletion: an empty upsert alone is insufficient.
+  Commerce, audit, processor and dispatch evidence remain retained; full ledger
+  archival is a separate operational policy, and D1 growth must be monitored.
+
+### Release and reviewer operations
+
+- Both Workers retain logs and enable 1% sampled traces. Structured admission and
+  maintenance logs contain scopes/counts without credentials or customer payloads.
+- Added `npm run ops:demo` aggregate SQL and `npm run smoke:demo` fixed-target session
+  issuance plus app-origin signed private-MCP owned read checks. The smoke prints
+  no credentials, performs no inference/approval and creates one isolated namespace.
+- CI still verifies push/PRs without deployment credentials. Optional manual
+  deploy_demo on main waits for the complete verification job, checks actual GitHub
+  environment reviewers/main-branch policy with explicit read-only permissions,
+  then enters the protected demo environment. It migrates, builds/verifies, deploys
+  Commerce then app, runs smoke, and removes its restricted ignored secrets file.
+  Missing environment settings/API access fail closed before deployment secrets.
+- External GitHub environment reviewers/branch policy, protected-main checks,
+  environment credentials, actual account plan/quotas, and cross-version deployed
+  Workflow continuity are rollout prerequisites, not changes claimed from local CI.
+- Added `docs/REVIEWER.md` for natural prompts, personas, expected canonical outcomes,
+  rejection/expiry/isolation and refund scenarios. `docs/OPERATIONS.md` documents
+  bootstrap/seeding, release order, GitHub setup, quotas, monitoring, retention,
+  recovery and rollback. README links both and distinguishes local M6 from live M5.
+
+### Verification
+
+- **76 automated tests passed** against real local Worker/D1/DO/Workflow bindings.
+  New coverage includes migration upgrade preserving commerce, exact concurrent
+  admissions/window reset/Retry-After, issuance with changed cookies, lifetime and
+  global chat caps, isolated HTTP limits, real WebSocket skipped completion with no
+  business writes, parallel tool admission, and old actual persisted chat deletion
+  while preserving live/pending namespaces and audit/commerce evidence.
+- Formatting, lint, local/demo TypeScript, fixture consistency, generated types,
+  demo build and artifact checks passed. Artifacts verify correct private binding,
+  shared demo D1, Commerce Workflow/repair and app maintenance schedule, traces and
+  absence of local signing keys. Build warnings remain the existing bundle-size
+  and Commerce build-time secret warning; deploy supplies the ignored secret file.
+- Independent code/security reviews have no remaining findings after explicit
+  persisted-history deletion, CI API permissions, quota presentation, and tool caps.
+- Hosted GitHub deployment and deployed M6 acceptance have not been run. They need
+  configured repository environment protection/secrets and an explicit rollout.
+
+
+## 27. Milestone 6 demo rollout
+
+Following prompt 49, applied remote migration 0007 before deploying either Worker.
+Wrangler confirmed the expected account and remote customer-service-demo database,
+only 0007 was outstanding, and the migration completed successfully. A subsequent
+migration listing reports none outstanding. No reseeding or reset was performed.
+
+- Commerce version: `a931ecb2-bb56-4df4-9f3d-e8b99ae1ab1c`.
+- Application version: `e8272984-c18a-48c1-b283-8673a2af6f30`.
+- Demo: https://customer-service-agent-demo.customer-service-lisbon.workers.dev
+- Deploy output confirmed the Commerce refund Workflow and one-minute repair cron,
+  and the app's fifteen-minute maintenance cron, existing Durable Object, shared
+  demo D1, Workers AI model mode and correct private Commerce service binding.
+- Demo build and deployment-artifact checks passed. Live `npm run smoke:demo`
+  passed session issuance, owned reads through signed private MCP, anonymous denial
+  and absence of the local probe route, without inference or approval.
+- Live browser refresh retained the prior chat/order/action state across deploy.
+  Starting a fresh isolated Ada session and asking about previous orders returned
+  verified canonical orders through Workers AI and private tools. No mutation was
+  approved in this rollout verification. Screenshot: `.wrangler/milestone6-live.png`.
+- Aggregate operational queries returned live session/model/tool counters, completed
+  and failed refund history, zero unresolved/needs-attention attempts, zero dispatch
+  retries and no foreign-key violations at inspection time. These are snapshot
+  observations, not a claim that future background work cannot fail.
+- Rollout verification exposed a CLI issue in ops:demo: Wrangler --file imports
+  discard SELECT results. Added the reviewed `scripts/status.mjs` wrapper to pass
+  tracked SQL as one --command=value argument and print all eight result sets.
+  Leading SQL comments cannot be parsed as command flags; errors/timeouts propagate.
+  The corrected remote command, formatting, lint and scoped review passed.
+- README and operations status now reflect deployed M6. Prompt 49 is recorded;
+  no commit/push was requested. Hosted GitHub environment settings/secrets and CI
+  execution remain operator setup; this deployment used the authorized local CLI.
+- No refund was deliberately held pending across this deployment. Accepted-work
+  continuity is covered by existing local runtime tests; a dedicated deployed
+  cross-version pending-refund scenario was not claimed or performed here.

@@ -41,7 +41,12 @@ async function api(path: string, csrf?: string, body?: unknown) {
     refunds?: unknown[];
     result?: { ok: boolean; error?: { message: string } };
   };
-  if (!response.ok) throw new Error(data.error?.code ?? "Request failed");
+  if (!response.ok)
+    throw new Error(
+      response.status === 429
+        ? `Demo usage limit reached. Try again in ${response.headers.get("Retry-After") ?? "60"} seconds.`
+        : (data.error?.code ?? "Request failed")
+    );
   return data;
 }
 
@@ -248,9 +253,13 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
         setRefunds(data.refunds ?? []);
         setRefundError("");
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (request === refundRequest.current)
-          setRefundError("Unable to refresh refunds. Please retry.");
+          setRefundError(
+            error instanceof Error
+              ? error.message
+              : "Unable to refresh refunds. Please retry."
+          );
       });
   }, []);
   const pendingRefund = refunds.some((r) => {
@@ -278,9 +287,13 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
         setCurrentOrders(data);
         setOrdersError("");
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (request === orderRequest.current)
-          setOrdersError("Unable to refresh orders. Please retry.");
+          setOrdersError(
+            error instanceof Error
+              ? error.message
+              : "Unable to refresh orders. Please retry."
+          );
       });
   }, []);
   useEffect(() => {
@@ -303,7 +316,7 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
           type: string;
           message: string;
         };
-        if (message.type === "identity_switch_denied")
+        if (["identity_switch_denied", "usage_limit"].includes(message.type))
           setNotice(message.message);
       } catch {
         /* Streaming text is handled by the chat SDK. */
@@ -320,8 +333,12 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
         setActions(data.actions);
         setActionClock(Date.now());
       })
-      .catch(() =>
-        setNotice("Your session may have expired. Refresh to reconnect.")
+      .catch((error: unknown) =>
+        setNotice(
+          error instanceof Error
+            ? error.message
+            : "Your session may have expired. Refresh to reconnect."
+        )
       );
   }, []);
   useEffect(() => {

@@ -79,7 +79,15 @@ before(async () => {
       durableObjects:
         name === "app"
           ? { ChatAgent: { className: "ChatAgent", useSQLite: true } }
-          : {}
+          : name === "harness"
+            ? {
+                ChatAgent: {
+                  className: "ChatAgent",
+                  scriptName: "app",
+                  useSQLite: true
+                }
+              }
+            : {}
     });
   }
   mf = new Miniflare(convertV4MiniflareOptions({ workers }));
@@ -115,6 +123,7 @@ async function request(path, jar = "", body, headers = {}) {
     method: body ? "POST" : "GET",
     headers: {
       Cookie: jar,
+      "CF-Connecting-IP": jar || crypto.randomUUID(),
       ...(body ? { "Content-Type": "application/json", Origin: origin } : {}),
       ...headers
     },
@@ -1886,4 +1895,326 @@ test("exhausted real Workflow retries keep the same unknown attempt pending with
   await refundStep(attempt, "reconcile");
   await refundStep(attempt, "reconcile");
   await refundStep(attempt, "finalize");
+});
+
+test("exact usage admission handles concurrency, retry delay and fixed-window reset", async () => {
+  const input = { bucket: "test-exact", limit: 3, seconds: 60, now: 120000 };
+  const replies = await Promise.all(
+    Array.from({ length: 8 }, () => internal("/usage", { input }))
+  );
+  assert.equal(replies.filter((r) => r.status === 200).length, 3);
+  const denied = replies.find((r) => r.status === 429);
+  assert.equal(denied.headers.get("Retry-After"), "60");
+  assert.equal((await denied.json()).error.code, "USAGE_LIMIT");
+  assert.equal(
+    (
+      await rows("SELECT used FROM usage_counters WHERE bucket=?", input.bucket)
+    )[0].used,
+    3
+  );
+  assert.equal(
+    (await internal("/usage", { input: { ...input, now: 180000 } })).status,
+    200
+  );
+});
+
+test("session issuance budget cannot be bypassed by new cookies and never provisions on denial", async () => {
+  const ip = "198.51.100.249";
+  const boot = await request("/api/session", "", undefined, {
+    "CF-Connecting-IP": ip
+  });
+  const { csrfToken } = await boot.json();
+  const before = (await rows("SELECT count(*) n FROM demo_sessions"))[0].n;
+  for (let i = 0; i < 11; i++) {
+    const response = await request(
+      "/api/sessions",
+      `__Host-csa_csrf=${csrfToken}`,
+      { persona: "ada" },
+      { "X-CSRF-Token": csrfToken, "CF-Connecting-IP": ip }
+    );
+    assert.equal(response.status, i < 10 ? 200 : 429);
+  }
+  assert.equal(
+    (await rows("SELECT count(*) n FROM demo_sessions"))[0].n - before,
+    10
+  );
+  const keys = await rows(
+    "SELECT bucket FROM usage_counters WHERE bucket LIKE 'sessions:%'"
+  );
+  assert.ok(keys.every((row) => !row.bucket.includes(ip)));
+});
+
+test("chat budgets are per-session, retain their lifetime count and bound all sessions globally", async () => {
+  const u = await user();
+  await run(
+    "DELETE FROM usage_counters WHERE bucket IN (?,?)",
+    `chat-minute:${u.session.chatName}`,
+    "chat-global"
+  );
+  await run(
+    "INSERT INTO usage_counters VALUES (?,0,40,?)",
+    `chat-session:${u.session.chatName}`,
+    Math.ceil(Date.now() / 1000) + 86400
+  );
+  const blocked = await internal("/chat-budget", { hash: u.hash });
+  assert.equal(blocked.status, 429);
+  assert.equal(
+    (
+      await rows(
+        "SELECT used FROM usage_counters WHERE bucket=?",
+        `chat-session:${u.session.chatName}`
+      )
+    )[0].used,
+    40
+  );
+  const other = await user();
+  assert.equal(
+    (await internal("/chat-budget", { hash: other.hash })).status,
+    200
+  );
+  const window = Math.floor(Date.now() / 86400000) * 86400;
+  await run(
+    "UPDATE usage_counters SET used=500 WHERE bucket='chat-global' AND window_start=?",
+    window
+  );
+  assert.equal(
+    (await internal("/chat-budget", { hash: other.hash })).status,
+    429
+  );
+  await run("DELETE FROM usage_counters WHERE bucket='chat-global'");
+});
+
+test("HTTP polling limits return 429 with Retry-After without affecting another visitor", async () => {
+  const ip = "198.51.100.250";
+  const response = await request("/api/session", "", undefined, {
+    "CF-Connecting-IP": ip
+  });
+  assert.equal(response.status, 200);
+  // Fill the exact bucket created by the real HTTP handler.
+  const [{ bucket }] = await rows(
+    "SELECT bucket FROM usage_counters WHERE bucket LIKE 'http:%' ORDER BY rowid DESC LIMIT 1"
+  );
+  await run("UPDATE usage_counters SET used=180 WHERE bucket=?", bucket);
+  const denied = await request("/api/session", "", undefined, {
+    "CF-Connecting-IP": ip
+  });
+  assert.equal(denied.status, 429);
+  assert.ok(Number(denied.headers.get("Retry-After")) > 0);
+  assert.equal(
+    (
+      await request("/api/session", "", undefined, {
+        "CF-Connecting-IP": "198.51.100.251"
+      })
+    ).status,
+    200
+  );
+});
+
+test("bounded maintenance retires old chat but preserves audit, commerce and unresolved work", async () => {
+  const clean = await user();
+  const response = await app.fetch(
+    `${origin}/agents/chat-agent/${clean.session.chatName}`,
+    { headers: { Upgrade: "websocket", Origin: origin, Cookie: clean.jar } }
+  );
+  const socket = response.webSocket;
+  socket.accept();
+  await waitFrames(
+    socket,
+    (frames) => frames.some((f) => f.id === "cleanup" && f.done),
+    () => socket.send(frame("cleanup", "Show my previous orders"))
+  );
+  socket.close();
+  const historyPath = `/agents/chat-agent/${clean.session.chatName}/get-messages`;
+  assert.ok(
+    JSON.stringify(
+      await (await request(historyPath, clean.jar)).json()
+    ).includes("Show my previous orders")
+  );
+  const pinned = await user();
+  const live = await user();
+  // All fixture namespaces include Brad's pending refund; pinning applies to the
+  // entire namespace, even when the selected customer is Ada.
+  const dispatches = await rows(
+    "SELECT workflow_instance_id FROM workflow_dispatches WHERE ns=?",
+    clean.session.chatName
+  );
+  for (const item of dispatches) {
+    await internal("/refund-step", {
+      kind: "reconcile",
+      workflowId: item.workflow_instance_id
+    });
+    await internal("/refund-step", {
+      kind: "reconcile",
+      workflowId: item.workflow_instance_id
+    });
+    const finalized = await internal("/refund-step", {
+      kind: "finalize",
+      workflowId: item.workflow_instance_id
+    });
+    assert.equal(finalized.status, 200, await finalized.text());
+  }
+  const old = new Date(Date.now() - 8 * 86400000).toISOString();
+  await run(
+    "UPDATE demo_sessions SET created_at='2026-01-01',expires_at=? WHERE ns IN (?,?)",
+    old,
+    clean.session.chatName,
+    pinned.session.chatName
+  );
+  await run("INSERT INTO usage_counters VALUES ('expired-test',0,1,1)");
+  const before = (
+    await rows(
+      "SELECT count(*) n FROM audit_events WHERE ns=?",
+      clean.session.chatName
+    )
+  )[0].n;
+  assert.equal(
+    (await internal("/retire-chat", { input: { ns: pinned.session.chatName } }))
+      .status,
+    200
+  );
+  assert.equal(
+    (await internal("/retire-chat", { input: { ns: live.session.chatName } }))
+      .status,
+    200
+  );
+  const result = await internal("/maintenance", {});
+  assert.equal(result.status, 200, await result.text());
+  assert.ok(
+    (
+      await rows(
+        "SELECT chat_retired_at FROM demo_sessions WHERE ns=?",
+        clean.session.chatName
+      )
+    )[0].chat_retired_at
+  );
+  for (const u of [pinned, live])
+    assert.equal(
+      (
+        await rows(
+          "SELECT chat_retired_at FROM demo_sessions WHERE ns=?",
+          u.session.chatName
+        )
+      )[0].chat_retired_at,
+      null
+    );
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) n FROM audit_events WHERE ns=?",
+        clean.session.chatName
+      )
+    )[0].n,
+    before
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) n FROM orders WHERE ns=?",
+        clean.session.chatName
+      )
+    )[0].n,
+    12
+  );
+  assert.equal(
+    (await rows("SELECT * FROM usage_counters WHERE bucket='expired-test'"))
+      .length,
+    0
+  );
+  // Test-only clock restoration lets the authenticated history route inspect
+  // persisted rows after cleanup; production sessions are never renewed.
+  await run(
+    "UPDATE demo_sessions SET expires_at=? WHERE ns=?",
+    new Date(Date.now() + 86400000).toISOString(),
+    clean.session.chatName
+  );
+  const cleared = await (await request(historyPath, clean.jar)).json();
+  assert.equal(
+    JSON.stringify(cleared).includes("Show my previous orders"),
+    false
+  );
+  assert.deepEqual(cleared, []);
+  await run(
+    "UPDATE demo_sessions SET expires_at=? WHERE ns=?",
+    old,
+    clean.session.chatName
+  );
+  assert.equal(
+    (
+      await internal("/retire-chat", {
+        input: { ns: clean.session.chatName }
+      }).then((r) => r.json())
+    ).retired,
+    false
+  );
+});
+
+test("exhausted chat budget settles the SDK turn without tools or business writes", async () => {
+  const u = await user();
+  const start = Math.floor(Date.now() / 60000) * 60;
+  await run(
+    "INSERT INTO usage_counters VALUES (?,?,12,?)",
+    `chat-minute:${u.session.chatName}`,
+    start,
+    start + 60
+  );
+  const response = await app.fetch(
+    `${origin}/agents/chat-agent/${u.session.chatName}`,
+    { headers: { Upgrade: "websocket", Origin: origin, Cookie: u.jar } }
+  );
+  const socket = response.webSocket;
+  socket.accept();
+  try {
+    const frames = await waitFrames(
+      socket,
+      (frames) => frames.some((f) => f.id === "limited" && f.done),
+      () => socket.send(frame("limited", "Cancel ord_101"))
+    );
+    assert.ok(frames.some((f) => f.type === "usage_limit" && f.retryAfter > 0));
+    assert.ok(
+      frames.some((f) => f.id === "limited" && f.outcome === "skipped")
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT count(*) n FROM mutation_actions WHERE ns=?",
+          u.session.chatName
+        )
+      )[0].n,
+      0
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT payment_status,fulfillment_status FROM orders WHERE ns=? AND order_id='ord_101'",
+          u.session.chatName
+        )
+      )[0].fulfillment_status,
+      "unshipped"
+    );
+  } finally {
+    socket.close();
+  }
+});
+
+test("model tool budget rejects parallel excess before reaching commerce", async () => {
+  const u = await user();
+  await run(
+    "INSERT INTO usage_counters VALUES (?,0,159,?)",
+    `tools:${u.session.chatName}`,
+    Math.ceil(Date.now() / 1000) + 86400
+  );
+  const responses = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      internal("/model-tool", {
+        hash: u.hash,
+        name: "get_customer_profile",
+        input: {}
+      }).then((r) => r.json())
+    )
+  );
+  assert.equal(responses.filter((r) => r.ok).length, 1);
+  assert.equal(
+    responses.filter((r) => !r.ok && r.error.code === "USAGE_LIMIT").length,
+    3
+  );
 });

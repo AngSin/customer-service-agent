@@ -1,3 +1,7 @@
+import { commerceTools } from "../src/model";
+import { getAgentByName } from "agents";
+import { consumeBudget, chatBudget } from "../src/usage";
+import { maintenance } from "../src/maintenance";
 import {
   acceptRefund,
   processAttempt,
@@ -42,6 +46,41 @@ export default {
     const clock = new Date(Date.now() + (body.offset ?? 0));
     try {
       const path = new URL(request.url).pathname;
+      if (path === "/model-tool") {
+        const execute = commerceTools(env, body.hash)[body.name!]?.execute;
+        if (!execute) throw new Error("Missing tool");
+        return Response.json(
+          await execute(body.input, {
+            toolCallId: crypto.randomUUID(),
+            messages: [],
+            context: {}
+          })
+        );
+      }
+      if (path === "/usage") {
+        const input = body.input as {
+          bucket: string;
+          limit: number;
+          seconds: number;
+          now: number;
+        };
+        await consumeBudget(env.DB, input.bucket, input, input.now);
+        return Response.json({ ok: true });
+      }
+      if (path === "/chat-budget") {
+        const session = await sessionByHash(env.DB, body.hash);
+        await chatBudget(env.DB, session.ns, session.expires_at);
+        return Response.json({ ok: true });
+      }
+      if (path === "/maintenance") {
+        await maintenance(env);
+        return Response.json({ ok: true });
+      }
+      if (path === "/retire-chat") {
+        const ns = (body.input as { ns: string }).ns;
+        const stub = await getAgentByName(env.ChatAgent, ns);
+        return Response.json({ retired: await stub.retireExpiredChat() });
+      }
       if (path === "/real-dispatch") {
         await dispatchRefunds(env, body.workflowId);
         return Response.json({ ok: true });

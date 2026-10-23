@@ -1,4 +1,4 @@
-# Customer service agent — Milestones 1–5
+# Customer service agent — Milestones 1–6
 
 This checkout implements the platform, canonical data, identity/consent, and commerce-tool
 milestones from [PLAN.md](PLAN.md). Milestone 4 adds owned order/profile/refund reads and
@@ -6,8 +6,11 @@ approved cancellation, shipping-address, and support-ticket writes. Milestone 5 
 and separately approved retries after confirmed failures. All money movement is simulated.
 
 The [deployed demo](https://customer-service-agent-demo.customer-service-lisbon.workers.dev)
-runs Milestone 5 and the full-width message composer, with migrations 0001–0006 and fixture v2.
-See `PLAN.md` sections 18–21 for rollout status and implementation evidence.
+runs Milestone 6, including release controls, the approval cards and full-width message
+composer, with migrations 0001–0007 and fixture v2. The protected GitHub CI deployment
+path still requires the repository environment settings and credentials documented below.
+See [reviewer walkthroughs](docs/REVIEWER.md), [release operations and budgets](docs/OPERATIONS.md),
+and PLAN.md for implementation and rollout evidence.
 
 The React/Kumo application and SQLite-backed `ChatAgent` come from Cloudflare's Agents starter.
 The private Commerce Worker exposes eight business MCP tools to authenticated sessions.
@@ -257,8 +260,8 @@ Authorization with signed context, strips cookies, and rejects redirects/alterna
 
 `npm run build:demo` selects `CLOUDFLARE_ENV=demo` before Vite builds.
 `npm run verify:artifacts` checks the emitted binding target, private Commerce ingress,
-shared demo database, required secret declaration, and absence of local keys or
-refund Workflows. This validates build configuration, **not deployed binding resolution**.
+shared demo database, required secret declaration, absence of local keys, and the
+Commerce refund Workflow plus repair and chat-maintenance schedules. This validates build configuration, **not deployed binding resolution**.
 To deploy, configure the demo D1 database in both Worker configs and put `MCP_CONTEXT_KEY`
 in the root `.env` file. Run `npm run deploy` to build with `CLOUDFLARE_ENV=demo`, deploy
 Commerce first, and then deploy the app. Both deploy commands read the same `.env` file

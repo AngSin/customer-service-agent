@@ -1,5 +1,13 @@
 name: Platform, data, and session checks
-on: [push, pull_request, workflow_dispatch]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      deploy_demo:
+        description: Deploy checked main to the protected demo environment
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -16,9 +24,67 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run types
+      - run: git diff --exit-code -- env.d.ts workers/commerce/env.d.ts
       - run: npm run types:check
       - run: npm run check
       - run: npm run fixtures:check
       - run: npm test
       - run: npm run build:demo
       - run: npm run verify:artifacts
+
+  deployment_guard:
+    permissions:
+      contents: read
+      actions: read
+    if: github.event_name == 'workflow_dispatch' && inputs.deploy_demo && github.ref == 'refs/heads/main'
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: node scripts/release-guard.mjs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  deploy_demo:
+    needs: deployment_guard
+    runs-on: ubuntu-latest
+    environment:
+      name: demo
+      url: https://customer-service-agent-demo.customer-service-lisbon.workers.dev
+    concurrency:
+      group: demo-deploy
+      cancel-in-progress: false
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      WRANGLER_SEND_METRICS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Prepare ignored secrets file
+        env:
+          CONTEXT_KEY: ${{ secrets.MCP_CONTEXT_KEY }}
+        run: |
+          node --input-type=module <<'JS'
+          import { mkdirSync, writeFileSync } from 'node:fs';
+          const key = process.env.CONTEXT_KEY;
+          if (!key || key.length < 32) throw new Error('Missing demo context key');
+          mkdirSync('.wrangler', { recursive: true });
+          writeFileSync('.wrangler/demo-secrets.json', JSON.stringify({ MCP_CONTEXT_KEY: key }), { mode: 0o600 });
+          JS
+      - run: npm run db:migrate:demo
+      - run: npm run build:demo
+      - run: npm run verify:artifacts
+      - run: npx wrangler deploy --config dist/customer_service_commerce/wrangler.json --secrets-file .wrangler/demo-secrets.json
+      - run: npx wrangler deploy --config dist/customer_service_agent/wrangler.json --secrets-file .wrangler/demo-secrets.json
+      - run: npm run smoke:demo
+      - name: Remove temporary secrets
+        if: always()
+        run: rm -f .wrangler/demo-secrets.json
