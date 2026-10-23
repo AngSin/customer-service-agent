@@ -1,3 +1,5 @@
+export { RefundWorkflow } from "./refund-workflow";
+import { dispatchRefunds } from "../../../shared/refunds";
 import { createMcpHandler } from "agents/mcp/server";
 import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
@@ -17,6 +19,13 @@ import {
 import { probeSchema, readProbeMarker } from "../../../shared/probe";
 
 export default {
+  async scheduled(
+    _controller: ScheduledController,
+    env: CommerceEnv,
+    ctx: ExecutionContext
+  ) {
+    ctx.waitUntil(dispatchRefunds(env));
+  },
   async fetch(request: Request, env: CommerceEnv, ctx: ExecutionContext) {
     if (request.url !== MCP_URL)
       return new Response("Not found", { status: 404 });
@@ -62,6 +71,24 @@ export default {
                     ? identity.action_id
                     : undefined
                 );
+                if (
+                  name === "refund_order" &&
+                  result.ok &&
+                  result.data.action_id
+                ) {
+                  const dispatch = await env.DB.prepare(
+                    "SELECT workflow_instance_id FROM workflow_dispatches WHERE ns=? AND action_id=?"
+                  )
+                    .bind(
+                      identity.namespace_id,
+                      result.data.action_id as string
+                    )
+                    .first<{ workflow_instance_id: string }>();
+                  if (dispatch)
+                    ctx.waitUntil(
+                      dispatchRefunds(env, dispatch.workflow_instance_id)
+                    );
+                }
                 return {
                   isError: !result.ok,
                   structuredContent: result,

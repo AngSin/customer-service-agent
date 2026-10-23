@@ -62,7 +62,7 @@ export const descriptions: Record<ToolName, string> = {
   create_support_ticket:
     "Propose a support ticket with its complete subject and body for card approval. An optional order must belong to the current customer.",
   refund_order:
-    "Read current refund status if pending/completed. New refund execution and failed refund retries are unavailable until the next milestone. Never claim a refund was started."
+    "Read current refund status if pending/completed. Eligible new refunds and confirmed failed retries require fresh card approval. Pending or completed refunds return status only; never create a second attempt for an uncertain outcome."
 };
 const int = z.number().int();
 export const orderSummary = z.strictObject({
@@ -87,6 +87,7 @@ export const refundSchema = z.strictObject({
   attempt_number: int.positive(),
   outcome: z.enum(["unknown", "confirmed_succeeded", "confirmed_no_refund"]),
   retry_requires_approval: z.boolean(),
+  needs_attention: z.boolean(),
   updated_at: z.string()
 });
 const actionResult = { action_id: idSchema, replayed: z.boolean() };

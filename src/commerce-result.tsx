@@ -28,7 +28,11 @@ export function CommerceResultView({
   if (!output.ok)
     return (
       <p role={output.error.code === "APPROVAL_REQUIRED" ? "status" : "alert"}>
-        {output.error.message}
+        {output.error.code === "APPROVAL_REQUIRED"
+          ? "Approval was requested. If still pending, review the highlighted card above the message field and click its Approve button to continue. Otherwise, check Previous actions for its current status."
+          : name === "refund_order" && output.error.code === "NOT_ELIGIBLE"
+            ? "A refund cannot start yet. Refunds require a paid order that is cancelled, shipped, or delivered. For a paid unshipped order, approve cancellation first, then request a separate refund approval."
+            : output.error.message}
       </p>
     );
   const data = output.data;
@@ -111,10 +115,7 @@ export function CommerceResultView({
       <div>
         <p>{result.notice}</p>
         {result.offer_refund && (
-          <p>
-            A refund needs separate approval. Refund execution is not available
-            yet.
-          </p>
+          <p>A full refund needs separate approval. Ask to request a refund.</p>
         )}
       </div>
     );
@@ -147,8 +148,11 @@ export function CommerceResultView({
   return (
     <p>
       Refund {refund.refund_id}: {refund.status} — {euros(refund.amount_minor)}.
+      {refund.needs_attention
+        ? " Processing needs attention; the outcome is still pending. Do not start another refund."
+        : ""}
       {refund.retry_requires_approval
-        ? " A new retry would require separate approval; refund retries are not available yet."
+        ? " A retry requires a new proposal and separate approval."
         : ""}
     </p>
   );

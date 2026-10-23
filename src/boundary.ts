@@ -114,6 +114,28 @@ export async function boundaryApi(
         "Set-Cookie": setCookie(SESSION_COOKIE, result.token)
       });
     }
+    if (path === "/api/refunds" && request.method === "GET") {
+      const session = await authenticate(request, env.DB);
+      const { results } = await env.DB.prepare(
+        "SELECT refund_id FROM refunds WHERE ns=? AND customer_id=? ORDER BY refund_id LIMIT 20"
+      )
+        .bind(session.ns, session.customer_id)
+        .all<{ refund_id: string }>();
+      const statuses = await Promise.all(
+        results.map((r) =>
+          callCommerce(
+            { ...env, session: { db: env.DB, tokenHash: session.token_hash } },
+            "get_refund_status",
+            { refund_id: r.refund_id }
+          )
+        )
+      );
+      if (statuses.some((r) => !r.ok))
+        throw new Error("Refund status unavailable");
+      return boundaryResponse({
+        refunds: statuses.map((r) => (r.ok ? r.data.refund : null))
+      });
+    }
     if (path === "/api/orders" && request.method === "GET") {
       const session = await authenticate(request, env.DB);
       return boundaryResponse(

@@ -64,6 +64,18 @@ before(async () => {
       },
       d1Databases: { DB: "sessions" },
       serviceBindings: name === "commerce" ? {} : { COMMERCE_MCP: "commerce" },
+      workflows:
+        name === "commerce"
+          ? { REFUNDS: { name: "test-refunds", className: "RefundWorkflow" } }
+          : name === "harness"
+            ? {
+                REFUNDS: {
+                  name: "test-refunds",
+                  className: "RefundWorkflow",
+                  scriptName: "commerce"
+                }
+              }
+            : {},
       durableObjects:
         name === "app"
           ? { ChatAgent: { className: "ChatAgent", useSQLite: true } }
@@ -1047,7 +1059,7 @@ test("stale and competing order actions cannot both apply", async () => {
   );
 });
 
-test("refund tools read existing status without starting or retrying money movement", async () => {
+test("refund tools return existing status or require fresh consent before creating an attempt", async () => {
   const brad = await user("bram"),
     cora = await user("cora"),
     ada = await user();
@@ -1061,11 +1073,11 @@ test("refund tools read existing status without starting or retrying money movem
   );
   assert.equal(
     (await shop(cora, "refund_order", { order_id: "ord_302" })).error.code,
-    "FEATURE_UNAVAILABLE"
+    "APPROVAL_REQUIRED"
   );
   assert.equal(
     (await shop(ada, "refund_order", { order_id: "ord_102" })).error.code,
-    "FEATURE_UNAVAILABLE"
+    "APPROVAL_REQUIRED"
   );
   assert.equal(
     (await shop(ada, "refund_order", { order_id: "ord_101" })).error.code,
@@ -1097,7 +1109,7 @@ test("refund tools read existing status without starting or retrying money movem
           u.session.chatName
         )
       )[0].n,
-      0
+      u === brad ? 0 : 1
     );
   }
 });
@@ -1265,4 +1277,613 @@ test("current orders refresh rehydrates owned canonical status and remains sessi
     (await foreign.json()).data.orders.map((o) => o.order_id),
     ["ord_201", "ord_202"]
   );
+});
+
+// Milestone 5: isolated deterministic crash points use internal trusted helpers;
+// a separate test exercises the real Workflow binding and private MCP acceptance.
+async function acceptedRefund(u, order = "ord_102") {
+  const p = await proposedByTool(u, "refund_order", { order_id: order });
+  assert.equal((await decide(u, p)).status, 200);
+  const response = await internal("/refund-accept", {
+    hash: u.hash,
+    actionId: p.actionId
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  const result = await response.json();
+  const attempt = (
+    await rows(
+      "SELECT * FROM refund_attempts WHERE ns=? AND action_id=?",
+      u.session.chatName,
+      p.actionId
+    )
+  )[0];
+  return { p, result, attempt };
+}
+async function refundStep(attempt, kind) {
+  const response = await internal("/refund-step", {
+    workflowId: attempt.workflow_instance_id,
+    kind
+  });
+  assert.equal(response.status, 200, await response.clone().text());
+  return (await response.json()).outcome;
+}
+async function terminal(u, id, timeout = 15000) {
+  const until = Date.now() + timeout;
+  while (Date.now() < until) {
+    const result = await shop(u, "get_refund_status", { refund_id: id });
+    if (result.data.refund.status !== "pending") return result.data.refund;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Refund did not reach terminal state");
+}
+
+test("refund acceptance atomically queues one canonical attempt and never claims completion", async () => {
+  const u = await user();
+  const { p, result, attempt } = await acceptedRefund(u);
+  assert.equal(result.refund.status, "pending");
+  assert.equal(result.refund.amount_minor, 7300);
+  assert.equal(result.refund.currency, "EUR");
+  assert.equal(attempt.processor_outcome, "unknown");
+  assert.equal(
+    (
+      await rows(
+        "SELECT payment_status FROM orders WHERE ns=? AND order_id=?",
+        u.session.chatName,
+        "ord_102"
+      )
+    )[0].payment_status,
+    "paid"
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT state FROM workflow_dispatches WHERE workflow_instance_id=?",
+        attempt.workflow_instance_id
+      )
+    )[0].state,
+    "queued"
+  );
+  const duplicate = await internal("/refund-accept", {
+    hash: u.hash,
+    actionId: p.actionId
+  });
+  assert.equal((await duplicate.json()).replayed, true);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM refund_attempts WHERE ns=? AND refund_id=?",
+        u.session.chatName,
+        result.refund.refund_id
+      )
+    )[0].n,
+    1
+  );
+  assert.equal(await refundStep(attempt, "process"), "confirmed_succeeded");
+  assert.equal(await refundStep(attempt, "finalize"), "completed");
+  assert.equal(await refundStep(attempt, "finalize"), "completed");
+  const final = await shop(u, "get_order", { order_id: "ord_102" });
+  assert.equal(final.data.order.payment_status, "refunded");
+  assert.equal(final.data.order.fulfillment_status, "shipped");
+});
+
+test("unknown refunds reconcile on the same attempt and cannot authorize another refund", async () => {
+  const u = await user("bram");
+  const attempt = (
+    await rows(
+      "SELECT * FROM refund_attempts WHERE ns=? AND refund_id=?",
+      u.session.chatName,
+      "ref_202"
+    )
+  )[0];
+  const result = { refund: { refund_id: "ref_202" } };
+  assert.equal(await refundStep(attempt, "process"), "unknown");
+  const pending = await shop(u, "refund_order", { order_id: "ord_202" });
+  assert.equal(pending.data.disposition, "status_only");
+  assert.equal(pending.data.refund.attempt_number, 1);
+  await refundStep(attempt, "attention");
+  const attention = await shop(u, "get_refund_status", {
+    refund_id: result.refund.refund_id
+  });
+  assert.equal(attention.data.refund.status, "pending");
+  assert.equal(attention.data.refund.needs_attention, true);
+  assert.equal(attention.data.refund.retry_requires_approval, false);
+  assert.equal(await refundStep(attempt, "reconcile"), "unknown");
+  assert.equal(await refundStep(attempt, "reconcile"), "confirmed_succeeded");
+  await refundStep(attempt, "finalize");
+  const done = await shop(u, "get_refund_status", {
+    refund_id: result.refund.refund_id
+  });
+  assert.equal(done.data.refund.status, "completed");
+  assert.equal(done.data.refund.needs_attention, false);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM refund_attempts WHERE ns=? AND refund_id=?",
+        u.session.chatName,
+        result.refund.refund_id
+      )
+    )[0].n,
+    1
+  );
+});
+
+test("lost processor response and concurrent finalization cannot produce two settlements", async () => {
+  const u = await user("fenn");
+  const { attempt, result } = await acceptedRefund(u, "ord_601");
+  const lost = await internal("/refund-step", {
+    workflowId: attempt.workflow_instance_id,
+    kind: "process"
+  });
+  assert.equal(lost.status, 503);
+  assert.equal(
+    (
+      await rows(
+        "SELECT outcome FROM mock_processor_operations WHERE attempt_key=?",
+        attempt.attempt_key
+      )
+    )[0].outcome,
+    "confirmed_succeeded"
+  );
+  assert.equal(await refundStep(attempt, "process"), "confirmed_succeeded");
+  await Promise.all([
+    refundStep(attempt, "finalize"),
+    refundStep(attempt, "finalize")
+  ]);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM mock_processor_operations WHERE ns=? AND refund_id=? AND outcome='confirmed_succeeded'",
+        u.session.chatName,
+        result.refund.refund_id
+      )
+    )[0].n,
+    1
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM audit_events WHERE ns=? AND refund_id=? AND event_type='finalized'",
+        u.session.chatName,
+        result.refund.refund_id
+      )
+    )[0].n,
+    1
+  );
+});
+
+test("definitive failure requires fresh consent and a new attempt under the same logical refund", async () => {
+  const u = await user("elin");
+  const first = await acceptedRefund(u, "ord_501");
+  assert.equal(
+    await refundStep(first.attempt, "process"),
+    "confirmed_no_refund"
+  );
+  await refundStep(first.attempt, "finalize");
+  const failed = await shop(u, "get_refund_status", {
+    refund_id: first.result.refund.refund_id
+  });
+  assert.equal(failed.data.refund.status, "failed");
+  assert.equal(failed.data.refund.retry_requires_approval, true);
+  assert.equal(
+    (await shop(u, "get_order", { order_id: "ord_501" })).data.order
+      .payment_status,
+    "paid"
+  );
+  const proposal = await proposedByTool(u, "refund_order", {
+    order_id: "ord_501"
+  });
+  assert.notEqual(proposal.actionId, first.p.actionId);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM refund_attempts WHERE ns=? AND refund_id=?",
+        u.session.chatName,
+        first.result.refund.refund_id
+      )
+    )[0].n,
+    1
+  );
+  const old = await executeFromBrowser(u, first.p);
+  assert.equal((await old.json()).result.data.replayed, true);
+  await decide(u, proposal);
+  const next = await internal("/refund-accept", {
+    hash: u.hash,
+    actionId: proposal.actionId
+  });
+  assert.equal(next.status, 200, await next.clone().text());
+  const result = await next.json();
+  assert.equal(result.refund.refund_id, first.result.refund.refund_id);
+  assert.equal(result.refund.attempt_number, 2);
+  const attempt = (
+    await rows(
+      "SELECT * FROM refund_attempts WHERE ns=? AND action_id=?",
+      u.session.chatName,
+      proposal.actionId
+    )
+  )[0];
+  assert.notEqual(attempt.attempt_key, first.attempt.attempt_key);
+  assert.notEqual(
+    attempt.workflow_instance_id,
+    first.attempt.workflow_instance_id
+  );
+  await refundStep(attempt, "process");
+  await refundStep(attempt, "finalize");
+  assert.equal(
+    (await shop(u, "get_order", { order_id: "ord_501" })).data.order
+      .fulfillment_status,
+    "delivered"
+  );
+  assert.equal(
+    (await shop(u, "get_order", { order_id: "ord_501" })).data.order
+      .payment_status,
+    "refunded"
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT execution_state FROM refund_attempts WHERE attempt_key=?",
+        first.attempt.attempt_key
+      )
+    )[0].execution_state,
+    "failed"
+  );
+});
+
+test("dispatch repairs crashes before creation and after a lost create response using the same ID", async () => {
+  const u = await user();
+  const { attempt } = await acceptedRefund(u);
+  const call = async (kind) =>
+    internal("/refund-dispatch", {
+      workflowId: attempt.workflow_instance_id,
+      kind
+    });
+  await call("unavailable");
+  let row = (
+    await rows(
+      "SELECT * FROM workflow_dispatches WHERE workflow_instance_id=?",
+      attempt.workflow_instance_id
+    )
+  )[0];
+  assert.equal(row.state, "queued");
+  assert.equal(row.retry_count, 1);
+  const lost = await call("lost-response");
+  assert.deepEqual((await lost.json()).ids, [
+    attempt.workflow_instance_id,
+    attempt.workflow_instance_id
+  ]);
+  row = (
+    await rows(
+      "SELECT * FROM workflow_dispatches WHERE workflow_instance_id=?",
+      attempt.workflow_instance_id
+    )
+  )[0];
+  assert.equal(row.state, "dispatched");
+  assert.deepEqual((await (await call("success")).json()).ids, []);
+});
+
+test("accepted refunds continue after session replacement without transferring visibility", async () => {
+  const u = await user();
+  const { attempt, result } = await acceptedRefund(u);
+  await replacement(u, "bram");
+  const other = await user("bram");
+  assert.equal(
+    (
+      await shop(other, "get_refund_status", {
+        refund_id: result.refund.refund_id
+      })
+    ).error.code,
+    "NOT_FOUND"
+  );
+  await refundStep(attempt, "process");
+  await refundStep(attempt, "finalize");
+  assert.equal(
+    (await shop(u, "get_refund_status", { refund_id: result.refund.refund_id }))
+      .data.refund.status,
+    "completed"
+  );
+});
+
+test("real private MCP acceptance starts a real Workflow and UI refund polling observes completion", async () => {
+  const u = await user();
+  const p = await proposedByTool(u, "refund_order", { order_id: "ord_102" });
+  const accepted = await approvedExecute(u, p);
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  assert.equal(accepted.data.refund.status, "pending");
+  const done = await terminal(u, accepted.data.refund.refund_id);
+  assert.equal(done.status, "completed");
+  assert.equal(done.amount_minor, 7300);
+  const status = await request("/api/refunds", u.jar);
+  assert.equal((await status.json()).refunds[0].status, "completed");
+  const dispatch = (
+    await rows(
+      "SELECT state FROM workflow_dispatches WHERE ns=? AND action_id=?",
+      u.session.chatName,
+      p.actionId
+    )
+  )[0];
+  assert.equal(dispatch.state, "dispatched");
+});
+
+test("late outbox failure rolls back refund, attempt, order version and consent together", async () => {
+  const u = await user();
+  const p = await proposedByTool(u, "refund_order", { order_id: "ord_102" });
+  await decide(u, p);
+  const ns = u.session.chatName;
+  await run(
+    `CREATE TRIGGER fail_refund_outbox BEFORE INSERT ON workflow_dispatches WHEN NEW.ns='${ns}' BEGIN SELECT RAISE(ABORT,'Simulated late outbox failure'); END`
+  );
+  try {
+    const response = await internal("/refund-accept", {
+      hash: u.hash,
+      actionId: p.actionId
+    });
+    assert.equal(response.status, 409);
+    assert.equal(
+      (
+        await rows(
+          "SELECT consumed_at FROM approvals WHERE ns=? AND action_id=?",
+          ns,
+          p.actionId
+        )
+      )[0].consumed_at,
+      null
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT count(*) AS n FROM refunds WHERE ns=? AND order_id=?",
+          ns,
+          "ord_102"
+        )
+      )[0].n,
+      0
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT count(*) AS n FROM refund_attempts WHERE ns=? AND action_id=?",
+          ns,
+          p.actionId
+        )
+      )[0].n,
+      0
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT version FROM orders WHERE ns=? AND order_id=?",
+          ns,
+          "ord_102"
+        )
+      )[0].version,
+      1
+    );
+  } finally {
+    await run("DROP TRIGGER fail_refund_outbox");
+  }
+  const retry = await internal("/refund-accept", {
+    hash: u.hash,
+    actionId: p.actionId
+  });
+  assert.equal(retry.status, 200);
+});
+
+test("concurrent approvals for a failed refund version can create only one retry attempt", async () => {
+  const u = await user("cora");
+  const first = await proposedByTool(u, "refund_order", {
+    order_id: "ord_302"
+  });
+  const second = { ...first, actionId: crypto.randomUUID() };
+  await run(
+    "INSERT INTO mutation_actions(ns,action_id,customer_id,approval_epoch,tool,arguments_json,digest,policy_version,target_id,target_version,created_at,updated_at) SELECT ns,?,customer_id,approval_epoch,tool,arguments_json,digest,policy_version,target_id,target_version,created_at,updated_at FROM mutation_actions WHERE ns=? AND action_id=?",
+    second.actionId,
+    u.session.chatName,
+    first.actionId
+  );
+  await run(
+    "INSERT INTO approvals(ns,approval_id,action_id,digest,approval_epoch,proposed_at,expires_at) SELECT ns,?,?,digest,approval_epoch,proposed_at,expires_at FROM approvals WHERE ns=? AND action_id=?",
+    crypto.randomUUID(),
+    second.actionId,
+    u.session.chatName,
+    first.actionId
+  );
+  await decide(u, first);
+  await decide(u, second);
+  const responses = await Promise.all(
+    [first, second].map((p) =>
+      internal("/refund-accept", { hash: u.hash, actionId: p.actionId })
+    )
+  );
+  assert.equal(responses.filter((r) => r.status === 200).length, 1);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM refund_attempts WHERE ns=? AND refund_id=?",
+        u.session.chatName,
+        "ref_302"
+      )
+    )[0].n,
+    2
+  );
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM approvals WHERE ns=? AND consumed_at IS NOT NULL",
+        u.session.chatName
+      )
+    )[0].n,
+    1
+  );
+});
+
+test("concurrent executions of the same refund action return one durable acceptance", async () => {
+  const u = await user();
+  const p = await proposedByTool(u, "refund_order", { order_id: "ord_102" });
+  await decide(u, p);
+  const responses = await Promise.all(
+    [1, 2, 3].map(() =>
+      internal("/refund-accept", { hash: u.hash, actionId: p.actionId })
+    )
+  );
+  assert.ok(responses.every((r) => r.status === 200));
+  const results = await Promise.all(responses.map((r) => r.json()));
+  assert.equal(new Set(results.map((r) => r.refund.refund_id)).size, 1);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM refund_attempts WHERE ns=? AND action_id=?",
+        u.session.chatName,
+        p.actionId
+      )
+    )[0].n,
+    1
+  );
+});
+
+test("real Workflows reconcile existing unknown work and recover a committed but lost processor response", async () => {
+  const brad = await user("bram");
+  const attempt = (
+    await rows(
+      "SELECT * FROM refund_attempts WHERE ns=? AND refund_id=?",
+      brad.session.chatName,
+      "ref_202"
+    )
+  )[0];
+  const dispatched = await internal("/real-dispatch", {
+    workflowId: attempt.workflow_instance_id
+  });
+  assert.equal(dispatched.status, 200, await dispatched.clone().text());
+  const unknownDone = await terminal(brad, "ref_202");
+  assert.equal(unknownDone.status, "completed");
+  assert.equal(
+    (
+      await rows(
+        "SELECT reconciliation_count FROM mock_processor_operations WHERE attempt_key=?",
+        attempt.attempt_key
+      )
+    )[0].reconciliation_count,
+    2
+  );
+  const fenn = await user("fenn");
+  const p = await proposedByTool(fenn, "refund_order", { order_id: "ord_601" });
+  const accepted = await approvedExecute(fenn, p);
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  const done = await terminal(fenn, accepted.data.refund.refund_id);
+  assert.equal(done.status, "completed");
+  assert.equal(done.attempt_number, 1);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM mock_processor_operations WHERE ns=? AND refund_id=? AND outcome='confirmed_succeeded'",
+        fenn.session.chatName,
+        done.refund_id
+      )
+    )[0].n,
+    1
+  );
+});
+
+test("cancellation and refund need separate approvals and completion keeps fulfillment cancelled", async () => {
+  const u = await user();
+  const cancel = await proposedByTool(u, "cancel_order", {
+    order_id: "ord_101"
+  });
+  await approvedExecute(u, cancel);
+  assert.equal(
+    (
+      await rows(
+        "SELECT count(*) AS n FROM refunds WHERE ns=? AND order_id=?",
+        u.session.chatName,
+        "ord_101"
+      )
+    )[0].n,
+    0
+  );
+  const refund = await proposedByTool(u, "refund_order", {
+    order_id: "ord_101"
+  });
+  assert.notEqual(refund.actionId, cancel.actionId);
+  assert.notEqual(refund.digest, cancel.digest);
+  assert.notEqual((await executeFromBrowser(u, refund)).status, 200);
+  const accepted = await approvedExecute(u, refund);
+  assert.equal(accepted.ok, true, JSON.stringify(accepted));
+  await terminal(u, accepted.data.refund.refund_id);
+  const order = (await shop(u, "get_order", { order_id: "ord_101" })).data
+    .order;
+  assert.equal(order.fulfillment_status, "cancelled");
+  assert.equal(order.payment_status, "refunded");
+});
+
+test("accepted processing survives browser credential expiry", async () => {
+  const u = await user();
+  const { attempt } = await acceptedRefund(u);
+  await run(
+    "UPDATE demo_sessions SET created_at='2025-01-01T00:00:00.000Z',expires_at='2025-01-02T00:00:00.000Z' WHERE ns=?",
+    u.session.chatName
+  );
+  assert.equal((await request("/api/orders", u.jar)).status, 401);
+  await refundStep(attempt, "process");
+  await refundStep(attempt, "finalize");
+  assert.equal(
+    (
+      await rows(
+        "SELECT payment_status FROM orders WHERE ns=? AND order_id=?",
+        u.session.chatName,
+        "ord_102"
+      )
+    )[0].payment_status,
+    "refunded"
+  );
+});
+
+test("exhausted real Workflow retries keep the same unknown attempt pending with needs-attention", async () => {
+  const u = await user("bram");
+  const attempt = (
+    await rows(
+      "SELECT * FROM refund_attempts WHERE ns=? AND refund_id=?",
+      u.session.chatName,
+      "ref_202"
+    )
+  )[0];
+  await run(
+    `CREATE TRIGGER fail_reconcile BEFORE UPDATE ON mock_processor_operations WHEN OLD.attempt_key='${attempt.attempt_key}' AND NEW.reconciliation_count>OLD.reconciliation_count BEGIN SELECT RAISE(ABORT,'Simulated reconciliation outage'); END`
+  );
+  try {
+    const dispatch = await internal("/real-dispatch", {
+      workflowId: attempt.workflow_instance_id
+    });
+    assert.equal(dispatch.status, 200);
+    const until = Date.now() + 20000;
+    let refund;
+    while (Date.now() < until) {
+      refund = (await shop(u, "get_refund_status", { refund_id: "ref_202" }))
+        .data.refund;
+      if (refund.needs_attention) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(refund.needs_attention, true);
+    assert.equal(refund.status, "pending");
+    assert.equal(refund.outcome, "unknown");
+    assert.equal(refund.retry_requires_approval, false);
+    assert.equal(
+      (await shop(u, "refund_order", { order_id: "ord_202" })).data.disposition,
+      "status_only"
+    );
+    assert.equal(
+      (
+        await rows(
+          "SELECT count(*) AS n FROM refund_attempts WHERE ns=? AND refund_id=?",
+          u.session.chatName,
+          "ref_202"
+        )
+      )[0].n,
+      1
+    );
+  } finally {
+    await run("DROP TRIGGER fail_reconcile");
+  }
+  // Operator recovery can continue the original attempt; never create another settlement key.
+  await refundStep(attempt, "reconcile");
+  await refundStep(attempt, "reconcile");
+  await refundStep(attempt, "finalize");
 });

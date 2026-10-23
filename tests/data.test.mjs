@@ -503,7 +503,7 @@ test("partial unique indexes reject a second unresolved attempt or second settle
     const refundId = kind === "pending" ? "ref_202" : "ref_301";
     const attempt = db
       .prepare(
-        "INSERT INTO refund_attempts SELECT ns, refund_id, 2, attempt_id || '_second', attempt_key || '_second', workflow_instance_id || '_second', origin, action_id, approval_id, execution_state, processor_outcome, failure_code, evidence_reference, created_at, updated_at FROM refund_attempts WHERE ns = ? AND refund_id = ?"
+        "INSERT INTO refund_attempts(ns,refund_id,attempt_number,attempt_id,attempt_key,workflow_instance_id,origin,action_id,approval_id,execution_state,processor_outcome,failure_code,evidence_reference,created_at,updated_at) SELECT ns, refund_id, 2, attempt_id || '_second', attempt_key || '_second', workflow_instance_id || '_second', origin, action_id, approval_id, execution_state, processor_outcome, failure_code, evidence_reference, created_at, updated_at FROM refund_attempts WHERE ns = ? AND refund_id = ?"
       )
       .bind(input.ns, refundId);
     const ledger = db

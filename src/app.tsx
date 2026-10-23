@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAgent } from "agents/react";
 import { useAgentChat } from "@cloudflare/ai-chat/react";
-import { Button, InputArea, Surface, Text } from "@cloudflare/kumo";
+import { Button, Surface, Text } from "@cloudflare/kumo";
+import { refundSchema } from "../shared/commerce-contract";
 import { CommerceResultView } from "./commerce-result";
 import type { ChatAgent } from "./server";
 import type { actionView } from "../shared/consent";
@@ -37,6 +38,7 @@ async function api(path: string, csrf?: string, body?: unknown) {
   const data = (await response.json()) as Bootstrap & {
     error?: { code: string };
     actions: ActionView[];
+    refunds?: unknown[];
     result?: { ok: boolean; error?: { message: string } };
   };
   if (!response.ok) throw new Error(data.error?.code ?? "Request failed");
@@ -117,12 +119,45 @@ function ApprovalCard({
       setBusy(false);
     }
   }
+  const active =
+    action.state === "proposed" &&
+    ["pending", "approved"].includes(action.decision) &&
+    !expired;
+  const approvalLabel =
+    action.tool === "cancel_order"
+      ? "Approve cancellation"
+      : action.tool === "refund_order"
+        ? "Approve refund"
+        : "Approve action";
   return (
-    <Surface className="rounded-xl p-4 space-y-2">
+    <Surface
+      className={
+        active
+          ? "rounded-xl border-2 border-amber-400 bg-amber-50 p-5 space-y-3 text-amber-950"
+          : "rounded-xl p-4 space-y-2"
+      }
+    >
+      {active && (
+        <>
+          <h2 className="text-lg font-bold">
+            {action.decision === "pending"
+              ? "Approval required"
+              : "Approved action needs attention"}
+          </h2>
+          <p>
+            {action.decision === "pending"
+              ? `Review the details, then click ${approvalLabel} below to continue. No change has been made yet. Sending a chat message does not approve this action.`
+              : "Your approval is recorded. Click Retry approved action to finish."}
+          </p>
+        </>
+      )}
       <Text bold>{labels[action.tool] ?? "Proposed action"}</Text>
       {payload.arguments.order_id && <p>Order: {payload.arguments.order_id}</p>}
       {action.tool === "cancel_order" && (
-        <p>Stops fulfillment. Payment will not be refunded.</p>
+        <p>
+          Cancels fulfillment only. To receive a refund, approve cancellation
+          first, then request a separate refund approval.
+        </p>
       )}
       {payload.amountMinor !== undefined && (
         <p>Full refund: {(payload.amountMinor / 100).toFixed(2)} EUR</p>
@@ -152,12 +187,22 @@ function ApprovalCard({
         action.decision === "pending" &&
         !expired && (
           <div className="flex gap-2">
-            <Button disabled={busy} onClick={() => void decide("approve")}>
-              Approve
-            </Button>
-            <Button disabled={busy} onClick={() => void decide("reject")}>
+            <button
+              type="button"
+              className="rounded-lg bg-blue-700 px-4 py-3 font-semibold text-white hover:bg-blue-800 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-700 disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void decide("approve")}
+            >
+              {busy ? "Processing…" : approvalLabel}
+            </button>
+            <button
+              type="button"
+              className="rounded-lg border border-amber-700 bg-white px-4 py-3 font-semibold text-amber-950 hover:bg-amber-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-700 disabled:opacity-50"
+              disabled={busy}
+              onClick={() => void decide("reject")}
+            >
               Reject
-            </Button>
+            </button>
           </div>
         )}
       {action.state === "proposed" &&
@@ -167,12 +212,13 @@ function ApprovalCard({
             Retry approved action
           </Button>
         )}
-      {action.state === "completed" && action.result != null && (
-        <CommerceResultView
-          name={action.tool}
-          result={{ ok: true, data: action.result, request_id: "stored" }}
-        />
-      )}
+      {["accepted", "completed"].includes(action.state) &&
+        action.result != null && (
+          <CommerceResultView
+            name={action.tool}
+            result={{ ok: true, data: action.result, request_id: "stored" }}
+          />
+        )}
       {error && <p role="alert">{error}</p>}
     </Surface>
   );
@@ -180,11 +226,47 @@ function ApprovalCard({
 
 function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
   const [input, setInput] = useState("");
+  const messageField = useRef<HTMLTextAreaElement>(null);
+  useEffect(() => {
+    const field = messageField.current;
+    if (!field) return;
+    field.style.height = "auto";
+    field.style.height = `${Math.min(field.scrollHeight, 160)}px`;
+  }, [input]);
   const [notice, setNotice] = useState("");
   const [actions, setActions] = useState<ActionView[]>([]);
+  const [actionClock, setActionClock] = useState(() => Date.now());
   const [currentOrders, setCurrentOrders] = useState<unknown>(null);
+  const [refunds, setRefunds] = useState<unknown[]>([]);
+  const [refundError, setRefundError] = useState("");
+  const refundRequest = useRef(0);
+  const refreshRefunds = useCallback(() => {
+    const request = ++refundRequest.current;
+    void api("/api/refunds")
+      .then((data) => {
+        if (request !== refundRequest.current) return;
+        setRefunds(data.refunds ?? []);
+        setRefundError("");
+      })
+      .catch(() => {
+        if (request === refundRequest.current)
+          setRefundError("Unable to refresh refunds. Please retry.");
+      });
+  }, []);
+  const pendingRefund = refunds.some((r) => {
+    const parsed = refundSchema.safeParse(r);
+    return parsed.success && parsed.data.status === "pending";
+  });
   const [ordersError, setOrdersError] = useState("");
   const orderRequest = useRef(0);
+  const refundRevision = refunds
+    .map((refund) => {
+      const parsed = refundSchema.safeParse(refund);
+      return parsed.success
+        ? `${parsed.data.refund_id}:${parsed.data.status}`
+        : "";
+    })
+    .join(",");
   const orderRevision = actions
     .map((a) => `${a.actionId}:${a.state}`)
     .join(",");
@@ -203,7 +285,15 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
   }, []);
   useEffect(() => {
     refreshOrders();
-  }, [refreshOrders, orderRevision]);
+  }, [refreshOrders, orderRevision, refundRevision]);
+  useEffect(() => {
+    refreshRefunds();
+  }, [refreshRefunds, orderRevision]);
+  useEffect(() => {
+    if (!pendingRefund) return;
+    const timer = setInterval(refreshRefunds, 3000);
+    return () => clearInterval(timer);
+  }, [pendingRefund, refreshRefunds]);
   const agent = useAgent<ChatAgent>({
     agent: "ChatAgent",
     name: session.chatName,
@@ -226,7 +316,10 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
   const busy = status === "streaming" || status === "submitted";
   const refresh = useCallback(() => {
     void api("/api/actions")
-      .then((data) => setActions(data.actions))
+      .then((data) => {
+        setActions(data.actions);
+        setActionClock(Date.now());
+      })
       .catch(() =>
         setNotice("Your session may have expired. Refresh to reconnect.")
       );
@@ -235,7 +328,16 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
     refresh();
     const timer = setInterval(refresh, 3000);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, busy]);
+  const activeActions = actions.filter(
+    (action) =>
+      action.state === "proposed" &&
+      ["pending", "approved"].includes(action.decision) &&
+      new Date(action.expiresAt).getTime() > actionClock
+  );
+  const previousActions = actions.filter(
+    (action) => !activeActions.includes(action)
+  );
   return (
     <>
       <Surface className="rounded-xl p-4 space-y-2" aria-label="Current orders">
@@ -249,6 +351,23 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
         {ordersError && <p role="alert">{ordersError}</p>}
         <Button onClick={refreshOrders}>Refresh orders</Button>
       </Surface>
+      {(refunds.length > 0 || refundError) && (
+        <Surface
+          className="rounded-xl p-4 space-y-2"
+          aria-label="Current refunds"
+        >
+          <Text bold>Current refunds</Text>
+          {refunds.map((refund, i) => (
+            <CommerceResultView
+              key={i}
+              name="get_refund_status"
+              result={{ ok: true, data: { refund }, request_id: "current" }}
+            />
+          ))}
+          {refundError && <p role="alert">{refundError}</p>}
+          <Button onClick={refreshRefunds}>Refresh refunds</Button>
+        </Surface>
+      )}
       <Surface className="rounded-xl p-4 space-y-4 min-h-64">
         {messages.length === 0 && (
           <p>
@@ -280,8 +399,22 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
           </div>
         ))}
       </Surface>
+      <section
+        aria-label="Actions awaiting approval"
+        aria-live="polite"
+        className="space-y-3"
+      >
+        {activeActions.map((action) => (
+          <ApprovalCard
+            key={action.actionId}
+            action={action}
+            csrf={csrf}
+            refresh={refresh}
+          />
+        ))}
+      </section>
       <form
-        className="flex gap-2"
+        className="w-full space-y-2"
         onSubmit={(event) => {
           event.preventDefault();
           if (!input.trim() || busy) return;
@@ -292,35 +425,61 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
           setInput("");
         }}
       >
-        <InputArea
+        <textarea
+          ref={messageField}
+          rows={1}
+          className="block w-full min-h-11 resize-none rounded-lg border px-3 py-2"
           aria-label="Message"
+          aria-describedby="message-keyboard-hint"
+          placeholder="Type a message…"
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing &&
+              event.nativeEvent.keyCode !== 229
+            ) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
+          }}
           value={input}
           onChange={(event) => setInput(event.target.value)}
         />
-        <Button type="submit" disabled={busy || !input.trim()}>
-          Send
-        </Button>
-        {busy && (
-          <Button type="button" onClick={() => void stop()}>
-            Stop
+        <p id="message-keyboard-hint" className="text-sm">
+          Enter to send · Shift+Enter for a new line
+        </p>
+        <div className="flex gap-2">
+          <Button type="submit" disabled={busy || !input.trim()}>
+            Send
           </Button>
-        )}
+          {busy && (
+            <Button type="button" onClick={() => void stop()}>
+              Stop
+            </Button>
+          )}
+        </div>
       </form>
       {(notice || error) && (
         <p role="alert">
           {notice || "Unable to connect. Refresh to check your session."}
         </p>
       )}
-      <section aria-label="Actions awaiting approval" className="space-y-3">
-        {actions.map((action) => (
-          <ApprovalCard
-            key={action.actionId}
-            action={action}
-            csrf={csrf}
-            refresh={refresh}
-          />
-        ))}
-      </section>
+      {previousActions.length > 0 && (
+        <details className="space-y-3">
+          <summary className="cursor-pointer font-semibold">
+            Previous actions ({previousActions.length})
+          </summary>
+          {previousActions.map((action) => (
+            <ApprovalCard
+              key={action.actionId}
+              action={action}
+              csrf={csrf}
+              refresh={refresh}
+            />
+          ))}
+        </details>
+      )}
     </>
   );
 }

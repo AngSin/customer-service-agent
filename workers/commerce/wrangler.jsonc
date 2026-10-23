@@ -43,7 +43,27 @@
       },
       "secrets": {
         "required": ["MCP_CONTEXT_KEY"]
+      },
+      "workflows": [
+        {
+          "binding": "REFUNDS",
+          "name": "commerce-refunds-demo",
+          "class_name": "RefundWorkflow"
+        }
+      ],
+      "triggers": {
+        "crons": ["* * * * *"]
       }
     }
+  },
+  "workflows": [
+    {
+      "binding": "REFUNDS",
+      "name": "commerce-refunds-local",
+      "class_name": "RefundWorkflow"
+    }
+  ],
+  "triggers": {
+    "crons": ["* * * * *"]
   }
 }

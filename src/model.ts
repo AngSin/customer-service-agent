@@ -25,6 +25,18 @@ export function fakeModel(commerce = false) {
       .find((p) => p.role === "user");
     const text = JSON.stringify(user?.content ?? "").toLowerCase();
     const order = /ord_[0-9]+/.exec(text)?.[0] ?? "ord_101";
+    if (/refund/.test(text)) {
+      const refund = /ref_[0-9]+/.exec(text)?.[0];
+      if (refund)
+        return {
+          name: "get_refund_status",
+          input: JSON.stringify({ refund_id: refund })
+        };
+      return {
+        name: "refund_order",
+        input: JSON.stringify({ order_id: order })
+      };
+    }
     if (/cancel/.test(text))
       return {
         name: "cancel_order",

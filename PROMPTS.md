@@ -508,3 +508,52 @@ can confirmed it works, please commit & push this. now tell me about milestone 5
 ```text
 can confirmed it works, please commit & push this. now tell me about milestone 5, what is the scope?
 ```
+
+## 40. User — implement Milestone 5
+
+```text
+ok please implement milestone 5, and summarise the changes & update PLAN & PROMPTS.md accordingly
+```
+
+## 41. User — update the message composer layout and keyboard behavior
+
+```text
+ok please change the UI so instead of a textarea we use an input that takes up the whole width of the centered container on the page and a send button below it. make it so pressing "enter" on the keyboard uploads the message and shift+enter adds a new line
+```
+
+## 42. User — deploy Milestone 5 and the message composer update
+
+```text
+ok please deploy this
+```
+
+## 43. User — make approval cards prominent and clarify cancellation wording
+
+Attachment: Agent Starter.pdf
+
+```text
+i got these responses while interacting:
+ok please cancel order 101 and refund it to me
+**assistant**
+Shop result when checked:
+Review the action card and click Approve before this action can run.
+Shop result when checked:
+This order is not eligible for that action.
+To cancel order 101, you need to click Approve on the action card. Cancellation never refunds payment.
+
+Refunding order 101 is not eligible at this time.
+**user**
+cancel order 101
+**assistant**
+Shop result when checked:
+Review the action card and click Approve before this action can run.
+To cancel order 101, you need to click Approve on the action card. Cancellation never refunds payment.
+
+i've attached a screenshot of the chat, the approve button appears below hte chat and is easy to miss the text returned is also misleading. can you show the approve/reject card above the text input for the user and add some color to it so the user can clearly see that they need to click on approve to cancel it
+```
+
+## 44. User — deploy, commit, and push the approval-card update
+
+```text
+pls also deploy this and commit & push this
+```

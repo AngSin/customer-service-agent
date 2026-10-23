@@ -30,12 +30,16 @@ for (const config of [app, commerce]) {
     "Local test key must not enter demo artifacts"
   );
   assert.ok(config.secrets.required.includes("MCP_CONTEXT_KEY"));
-  assert.equal(
-    config.workflows.length,
-    0,
-    "Refund execution is outside Milestone 4"
-  );
 }
+assert.equal(app.workflows.length, 0);
+assert.deepEqual(commerce.workflows, [
+  {
+    binding: "REFUNDS",
+    name: "commerce-refunds-demo",
+    class_name: "RefundWorkflow"
+  }
+]);
+assert.deepEqual(commerce.triggers.crons, ["* * * * *"]);
 console.log(
-  "Verified demo binding target, private Commerce ingress, shared demo D1, and absence of local signing keys/Workflows. No deployed resources were checked."
+  "Verified demo binding target, private Commerce ingress, shared demo D1, and absence of local signing keys, and Commerce refund Workflow/repair schedule. No deployed resources were checked."
 );

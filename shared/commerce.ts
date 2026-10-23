@@ -1,3 +1,4 @@
+import { acceptRefund } from "./refunds";
 import {
   acceptAction,
   canonical,
@@ -44,7 +45,7 @@ async function refundFor(
 ) {
   const row = await db
     .prepare(
-      `SELECT r.refund_id,r.order_id,r.amount_minor,r.currency,r.status,r.current_attempt_number AS attempt_number,a.processor_outcome AS outcome,r.updated_at FROM refunds r JOIN orders o ON o.ns=r.ns AND o.order_id=r.order_id AND o.customer_id=r.customer_id JOIN refund_attempts a ON a.ns=r.ns AND a.refund_id=r.refund_id AND a.attempt_number=r.current_attempt_number WHERE r.ns=? AND r.customer_id=? AND ${column}=?`
+      `SELECT r.refund_id,r.order_id,r.amount_minor,r.currency,r.status,r.current_attempt_number AS attempt_number,a.processor_outcome AS outcome,a.needs_attention,r.updated_at FROM refunds r JOIN orders o ON o.ns=r.ns AND o.order_id=r.order_id AND o.customer_id=r.customer_id JOIN refund_attempts a ON a.ns=r.ns AND a.refund_id=r.refund_id AND a.attempt_number=r.current_attempt_number WHERE r.ns=? AND r.customer_id=? AND ${column}=?`
     )
     .bind(session.ns, session.customer_id, id)
     .first<{
@@ -56,9 +57,14 @@ async function refundFor(
       attempt_number: number;
       outcome: string;
       updated_at: string;
+      needs_attention: number;
     }>();
   return row
-    ? { ...row, retry_requires_approval: row.status === "failed" }
+    ? {
+        ...row,
+        needs_attention: Boolean(row.needs_attention),
+        retry_requires_approval: row.status === "failed"
+      }
     : null;
 }
 function summary(order: Order) {
@@ -112,9 +118,7 @@ const messages: Record<string, string> = {
   VERSION_CONFLICT: "The order has changed. Request a new proposal.",
   SESSION_REVOKED: "This session is no longer active.",
   UNAUTHENTICATED: "Your session has expired. Start a new session.",
-  RATE_LIMITED: "This session has reached the support ticket limit.",
-  FEATURE_UNAVAILABLE:
-    "New refund execution and refund retries are not available yet. Existing refund status can still be checked."
+  RATE_LIMITED: "This session has reached the support ticket limit."
 };
 function failure(error: unknown, requestId: string): CommerceResult {
   const code =
@@ -194,21 +198,6 @@ async function read(
   }
   const order = await orderFor(db, session, args.order_id as string);
   const refund = await refundFor(db, session, "r.order_id", order.order_id);
-  if (name === "refund_order") {
-    if (refund && ["pending", "completed"].includes(refund.status))
-      return {
-        refund,
-        action_id: null,
-        replayed: false,
-        disposition: "status_only"
-      };
-    if (
-      order.payment_status !== "paid" ||
-      !["cancelled", "shipped", "delivered"].includes(order.fulfillment_status)
-    )
-      throw new BoundaryError("NOT_ELIGIBLE", 409);
-    throw new BoundaryError("FEATURE_UNAVAILABLE", 409);
-  }
   const { results: items } = await db
     .prepare(
       "SELECT sku,name,quantity,unit_minor,line_minor FROM order_items WHERE ns=? AND order_id=? ORDER BY item_id"
@@ -248,7 +237,7 @@ async function read(
                 "Address changes require an unshipped order without a pending or completed refund."
               ]
             : []),
-          "New refund execution is unavailable until Milestone 5."
+          "Refunds require paid orders that are cancelled, shipped, or delivered, and separate approval."
         ]
       }
     }
@@ -274,8 +263,7 @@ async function execute(
       replayed: true
     };
   }
-  if (name === "refund_order")
-    throw new BoundaryError("FEATURE_UNAVAILABLE", 409);
+  if (name === "refund_order") return acceptRefund(db, session, actionId);
   const now = new Date().toISOString();
   const effects: Statement[] = [];
   let result: Record<string, unknown>;
@@ -448,7 +436,21 @@ export async function commerceCall(
     if (!parsed.success) throw new BoundaryError("INVALID_ARGUMENT", 400);
     const args = parsed.data as Record<string, unknown>;
     let data: Record<string, unknown>;
-    if (mutations.has(name) && name !== "refund_order") {
+    const existingRefund =
+      name === "refund_order" && !actionId
+        ? await refundFor(db, session, "r.order_id", args.order_id as string)
+        : null;
+    if (
+      existingRefund &&
+      ["pending", "completed"].includes(existingRefund.status)
+    ) {
+      data = {
+        refund: existingRefund,
+        action_id: null,
+        replayed: false,
+        disposition: "status_only"
+      };
+    } else if (mutations.has(name)) {
       if (!actionId) {
         const proposal = await createProposal(db, hash, {
           tool: name,

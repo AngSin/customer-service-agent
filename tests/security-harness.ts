@@ -1,3 +1,12 @@
+import {
+  acceptRefund,
+  processAttempt,
+  reconcileAttempt,
+  finalizeAttempt,
+  markAttention,
+  dispatchRefunds
+} from "../shared/refunds";
+import { sessionByHash } from "../shared/session";
 // Internal test Worker only. None of these endpoints is bundled into deployment.
 import {
   createProposal,
@@ -14,7 +23,10 @@ import { callCommerce, connectCommerce } from "../src/commerce-client";
 import type { ToolName } from "../shared/commerce-contract";
 import { runSessionProbe } from "../src/commerce-client";
 export default {
-  async fetch(request: Request, env: Env) {
+  async fetch(
+    request: Request,
+    env: Env & { REFUNDS: import("../shared/refunds").RefundBinding }
+  ) {
     const body = (await request.json()) as {
       hash: string;
       input: unknown;
@@ -25,10 +37,62 @@ export default {
       fail?: boolean;
       kind?: string;
       name?: ToolName;
+      workflowId?: string;
     };
     const clock = new Date(Date.now() + (body.offset ?? 0));
     try {
       const path = new URL(request.url).pathname;
+      if (path === "/real-dispatch") {
+        await dispatchRefunds(env, body.workflowId);
+        return Response.json({ ok: true });
+      }
+      if (path === "/refund-accept")
+        return Response.json(
+          await acceptRefund(
+            env.DB,
+            await sessionByHash(env.DB, body.hash),
+            body.actionId
+          )
+        );
+      if (path === "/refund-step") {
+        const functions = {
+          process: processAttempt,
+          reconcile: reconcileAttempt,
+          finalize: finalizeAttempt,
+          attention: markAttention
+        };
+        return Response.json({
+          outcome: await functions[body.kind as keyof typeof functions](
+            env.DB,
+            body.workflowId!
+          )
+        });
+      }
+      if (path === "/refund-dispatch") {
+        const ids: string[] = [];
+        await dispatchRefunds(
+          {
+            DB: env.DB,
+            REFUNDS: {
+              create: async ({ id }) => {
+                ids.push(id);
+                if (body.kind !== "success")
+                  throw new Error("Simulated create response lost");
+              },
+              get: async (id) => ({
+                status: async () => {
+                  ids.push(id);
+                  if (body.kind === "unavailable")
+                    throw new Error("Not created");
+                  return { status: "running" };
+                }
+              })
+            }
+          },
+          body.workflowId
+        );
+        return Response.json({ ids });
+      }
       if (path === "/tool")
         return Response.json(
           await callCommerce(

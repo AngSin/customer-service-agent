@@ -1,12 +1,12 @@
-# Customer service agent — Milestones 1–4
+# Customer service agent — Milestones 1–5
 
 This checkout implements the platform, canonical data, identity/consent, and commerce-tool
 milestones from [PLAN.md](PLAN.md). Milestone 4 adds owned order/profile/refund reads and
-approved cancellation, shipping-address, and support-ticket writes. Refund execution and
-retries remain Milestone 5 work.
+approved cancellation, shipping-address, and support-ticket writes. Milestone 5 adds approved full refunds, durable background execution, reconciliation,
+and separately approved retries after confirmed failures. All money movement is simulated.
 
 The [deployed demo](https://customer-service-agent-demo.customer-service-lisbon.workers.dev)
-now runs Milestone 4 with the existing customer-name migration and fixture v2.
+runs Milestone 5 and the full-width message composer, with migrations 0001–0006 and fixture v2.
 See `PLAN.md` sections 18–21 for rollout status and implementation evidence.
 
 The React/Kumo application and SQLite-backed `ChatAgent` come from Cloudflare's Agents starter.
@@ -42,9 +42,9 @@ the same action ID cannot apply its effects twice. Unaccepted approvals expire a
 minutes and are revoked by **Start new session**. Use a private browser window for an
 independent session; chat cannot change customer identity.
 
-New refunds and failed-refund retries return a clear unavailable message (`FEATURE_UNAVAILABLE`)
-and create no approval, attempt, ledger entry, dispatch, or Workflow. Pending/completed refunds
-return existing status. No real payments, emails, or external ticket system are involved.
+In Milestone 5, new refunds and confirmed-failed retries require exact card approval.
+Pending/completed refunds return existing status without starting another attempt.
+No real payments, emails, or external ticket system are involved.
 
 ## Run locally
 
@@ -61,7 +61,7 @@ npm run dev
 
 Open the Vite URL, choose a fictional customer, and click **Start session** before sending a message.
 The fake AI SDK model routes a small set of test phrases (previous orders, explicit order IDs,
-cancellation, and profile/connection checks) to real private MCP tools, then streams a fixed
+cancellation, refund requests/status, and profile/connection checks) to real private MCP tools, then streams a fixed
 response. It is a test fixture, not a full natural-language model. Alternatively, `GET /api/milestone/probe` on the local app
 returns the marker read independently through both Workers' D1 bindings.
 
@@ -100,7 +100,7 @@ applied migration after release. Append a new migration instead.
 inspection namespace with six fictional customers, twelve orders/items, three tickets,
 and coherent pending/completed/failed refund histories. Money is integer EUR cents;
 all emails end in `.test`. Pending history has a queued dispatch row but remains pending
-until Milestone 5 implements execution. The reference namespace is bound to Ada and has
+until the Milestone 5 repair dispatcher processes it. The reference namespace is bound to Ada and has
 mutations disabled; its deterministic token hash is not a usable browser credential.
 
 Running `db:seed` again validates the catalog and preserves existing namespaces, changed
@@ -181,8 +181,8 @@ arguments, canonical amount/versions, and the session epoch. Proposals expire af
 minutes. Cards show the exact action and consequences; a chat “yes” does not approve.
 The decision endpoint records consent only; the browser then calls the execution endpoint.
 `acceptAction` rechecks ownership/versions/consent, consumes once, and records acceptance
-with trusted business effects and stored results in the same guarded D1 batch. The helper
-itself is internal. Refund outbox effects remain future Milestone 5 work.
+with trusted business effects, stored results, and refund outbox effects in the same guarded
+D1 batch. The helper itself is internal.
 
 There is no browser proposal-creation endpoint. Model tool calls create proposals through
 the authenticated private Commerce adapter. Neither model-visible arguments nor browser
@@ -323,8 +323,84 @@ Consumption, business effects, stored result, and audit are one guarded D1 trans
 replays return stored results; rejected, expired, revoked, stale, or altered actions cannot write.
 New ticket creation is limited to 20 approved tickets per session.
 
-Milestone 4 needs no new schema migration: Milestones 2–3 already supplied action results,
-approval/audit records, and commerce tables. Normal deploy uses `npm run deploy`; do not reset or
-reseed existing sessions. The previously deployed database already includes migrations 0001–0005.
+Milestone 4 needed no new schema migration. Milestone 5 adds migration 0006 for the refund
+attention indicator; apply it before deploying the new code. Do not reset or reseed existing
+sessions. The deployed database currently includes migrations 0001–0006.
 To test with real Workers AI locally, run `MILESTONE_LIVE_AI=1 npm run dev` using existing
 Cloudflare authentication. Commerce and D1 stay local; model inference uses the AI binding.
+
+## Milestone 5: durable simulated refunds
+
+Apply the new forward migration locally, preserving existing records and the sealed fixture v2:
+
+```bash
+npm run db:migrate
+npm run db:seed
+npm run dev
+```
+
+`0006_refund_attention.sql` adds one `needs_attention` flag to refund attempts. It records
+an unresolved outcome after bounded technical retries; it does not turn uncertainty into
+failure or authorize another payment. Seed values and checksums are unchanged. The seed
+command is needed only for local catalog/reference setup, not for every deployment.
+
+Start a fresh **Ada** session and ask “Please refund ord_102.” The card shows **73.00 EUR**.
+Click **Approve** to accept a pending refund. The Commerce Worker starts `RefundWorkflow`;
+**Current refunds** automatically refreshes until terminal, and **Current orders** then
+shows shipped/refunded. Refreshing or closing the browser does not stop accepted work.
+Alternatively, cancel `ord_101` first; its payment stays paid until a separately approved
+full refund succeeds, at which point fulfillment stays cancelled.
+
+Deterministic scenarios in fresh sessions:
+
+| Customer | Request                                                            | Outcome                                                                                                                         |
+| -------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
+| Ada      | Refund shipped `ord_102`, or separately refund cancelled `ord_101` | Full refund succeeds                                                                                                            |
+| Brad     | Read pending `ref_202`                                             | Cron repair starts its existing fixture attempt; two bounded reconciliation steps confirm success under the same key            |
+| Cora     | Retry failed `ord_302`                                             | Fresh approval creates attempt 2 under existing `ref_302`; it succeeds. Completed `ref_301` remains status-only                 |
+| Dax      | Refund already-cancelled `ord_401`                                 | Succeeds without another cancellation                                                                                           |
+| Elin     | Refund `ord_501`, then request retry                               | Attempt 1 definitively fails without changing payment; a new approval starts attempt 2, which succeeds                          |
+| Fenn     | Refund `ord_601`                                                   | Processor success is committed before a simulated lost response; Workflow retry observes that same operation and finalizes once |
+
+Normal scenarios complete shortly after approval; seeded pending work is dispatched by a
+once-per-minute repair schedule. Local Vite does not automatically deliver cron events:
+the integration suite explicitly invokes the real repair dispatcher and Workflow binding.
+For interactive cron testing, use the [Cloudflare scheduled-event testing guide](https://developers.cloudflare.com/workers/configuration/cron-triggers/#test-cron-triggers-locally)
+with the Commerce Worker. The production Commerce cron repairs
+at most 20 queued current pending attempts per tick. Status reads never start or restart work.
+
+Acceptance atomically persists one logical refund, its immutable attempt/key/Workflow ID,
+consumed consent, saved pending result, audit, and queued dispatch. Dispatch retries reuse
+the persisted ID; a create response lost after creation is recovered by retrieving that
+instance. The Workflow trusts persisted accepted data rather than trigger amounts or model
+arguments. Steps retry at most three times with exponential backoff; unknown outcomes
+reconcile using the same attempt with bounded durable waits (1, 2, 4, 8 seconds).
+
+Success updates payment to refunded and leaves fulfillment unchanged. Confirmed no-refund
+failure leaves payment paid. Only that definitive failure permits a new approved attempt.
+Pending/unknown/completed calls do not create another approval or attempt. The processor
+ledger enforces one successful settlement per logical refund and same-key payload matching.
+Finalization, payment update, action result, and audit are transactional and replayable.
+
+If technical retries are exhausted, the refund stays pending with **needs attention**.
+The original key must be reconciled by an operator; there is deliberately no public route
+to force failure, reset a key, or manufacture another attempt. Accepted work continues after
+session replacement or expiry, but only a still-valid owning credential can read its history;
+a new session has separate fixtures and cannot access the old refund.
+
+Deployment commands (migration 0006 and this release are already deployed):
+
+```bash
+npm run db:migrate:demo
+npm run deploy
+```
+
+Commerce now owns the local/demo `REFUNDS` Workflow binding and the repair cron; the app
+still accesses Commerce exclusively through its private service binding. Generated types
+and build-artifact checks cover the new binding/export/schedule. Never seed/reset the demo
+to deploy this feature. Existing fixture pending rows are trusted synthetic history and
+may be processed by repair without pretending they are newly approved reviewer requests.
+
+The deployed message composer spans the centered container and starts at one line.
+Enter sends; Shift+Enter inserts a line break. Send sits below the field.
+See `PLAN.md` section 23 for deployment and live verification.

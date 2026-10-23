@@ -1,6 +1,6 @@
 # Customer service agent build plan
 
-Status: **Milestones 1–4 are implemented**. Milestones 1–4 and fixture v2/customer names are deployed; Milestone 4 source and rollout documentation are included in the commerce-tools implementation commit. Milestones 5–6 remain planned. See sections 18–20 for rollout status and verification. Historical implementation records describe their state at the time.
+Status: **Milestones 1–5 are implemented and deployed**, including migration 0006 and the full-width message composer. Milestone 6 remains planned. See sections 18–25 for implementation and rollout records. Historical records describe their state at the time.
 
 ## 1. Objective and agreed scope
 
@@ -449,7 +449,7 @@ Use Local Explorer during implementation debugging to inspect local D1 rows/bind
 | 2. Canonical data and fixtures — implemented | Apply three versioned migrations; validate constraints and six/twelve/three fixture counts. Seed twice safely; provision isolated namespaces. Local reset cannot target demo. |
 | 3. Identity and consent boundary — implemented | Immutable persona sessions, signed MCP context, gated DO routes, action cards/expiry/revocation, and transactional acceptance. Pass forged identity, cross-owner, direct-MCP, stale approval, and session-replacement race tests before enabling mutation execution. |
 | 4. Commerce tools and UI — implemented | Register exactly eight tools with strict input/output schemas; implement owned reads, approved cancellation/address/ticket writes, safe errors, and action replay. Show no-refund cancellation notice; saved profile unchanged. |
-| 5. Refund durability | Workflow, mock ledger, logical refunds/attempts, dispatch repair, failure reconciliation, and newly approved failed retries. Pass crash matrix and concurrent/replayed refund tests with one settlement per order. |
+| 5. Refund durability — implemented | Workflow, mock ledger, logical refunds/attempts, dispatch repair, failure reconciliation, and newly approved failed retries. Pass crash matrix and concurrent/replayed refund tests with one settlement per order. |
 | 6. Reviewer release | Wrangler configs/types, protected GitHub Actions path, explicit bootstrap, bounded usage, deterministic walkthroughs, complete tests and operational notes. Demo app binding resolves to the private `customer-service-commerce-demo`; app-origin signed MCP smoke succeeds, unsigned context fails in the internal harness, and public commerce ingress remains disabled. Re-deploy preserves commerce; accepted Workflow continues; reviewer can reproduce every scenario in a fresh session. |
 
 ## 13. Risks and remaining implementation checks
@@ -706,3 +706,135 @@ out-of-order responses. No new dependencies or bindings were added.
   did not mutate existing reviewer sessions.
 - Build and deployment artifact checks passed. Refund execution remains unavailable until
   Milestone 5. Prompts 37–38 are recorded in PROMPTS.md. The user confirmed the live behavior and requested committing/pushing the implementation and rollout documentation.
+
+
+## 22. Milestone 5 implementation record — 2026-10-23
+
+Implemented full simulated refunds, durable Workflow execution, outbox repair, same-key
+reconciliation, and freshly approved retries after definitive failure. No real provider,
+payment instrument, or money movement is involved. Prompt 40 is appended to PROMPTS.md.
+
+### Implementation
+
+- `shared/refunds.ts` accepts the exact immutable full-order amount/currency. One guarded D1
+  batch consumes approval, creates or advances the logical refund, appends the immutable
+  attempt/key/Workflow ID, increments order version without changing payment, persists the
+  pending action result, records acceptance, and queues dispatch. Late assertion/write
+  failures roll back every effect. Same-action concurrent execution replays persisted results;
+  competing actions against one refund version cannot create two accepted attempts.
+- The Commerce Worker exports `RefundWorkflow`, binds `REFUNDS` separately for local/demo,
+  and schedules once-per-minute bounded repair. Immediate post-acceptance dispatch and cron
+  both use the persisted Workflow ID. Lost create responses retrieve/observe that instance;
+  failed creation leaves queued work with a safe error and retry count. Each tick handles
+  at most 20 current pending dispatches, including pre-existing synthetic fixture work.
+- Workflow triggers identify a persisted attempt only. Loading rechecks ownership, full
+  canonical amount/currency, legal order/payment state, accepted consumed consent, and
+  definitive previous failure evidence for retries. Accepted work does not depend on the
+  browser credential’s later expiry, replacement, or approval epoch.
+- Durable steps use stable names and bounded retry/backoff. The mock processor is keyed by
+  the immutable attempt key, verifies payload equality on replay, and retains a unique
+  successful settlement per logical refund. Fenn’s lost response happens after processor
+  success is durable; replay reads that same operation. Brad’s unknown fixture reconciles
+  twice using the same key. No unknown outcome creates fresh consent, a new attempt, or a
+  new Workflow ID.
+- Finalization atomically records processor confirmation, terminal attempt/refund state,
+  audit, action result, and payment update. Success sets payment refunded; failure leaves
+  payment paid. Fulfillment is unchanged in both cases. Repeated/concurrent finalization
+  has one effect and one finalization audit event.
+- Elin ord_501 first fails definitively; a new proposal/digest/approval then creates attempt
+  N+1 under the same refund ID, with a new key and Workflow ID. Old attempt/evidence stay
+  immutable. Completed/pending refunds return status only. Cancellation remains a distinct
+  approved operation that never itself starts a refund.
+- New forward migration `0006_refund_attention.sql` adds a constrained `needs_attention` flag
+  to attempts. Exhausted technical retries preserve pending/unknown and expose attention
+  instead of falsely confirming failure. The migration was applied locally only; fixture
+  v2 values/checksums and existing tables/IDs are preserved.
+- The UI renders accepted pending and completed results, polls a scoped `/api/refunds` view,
+  reports confirmed failure/fresh approval requirements, and refreshes canonical orders when
+  refund status changes (including fixture work with no reviewer action). Refresh responses
+  are sequenced to prevent old responses overwriting current state. No public fault-injection,
+  processor, dispatch, reset, or privileged retry endpoint was added.
+
+### Verification and remaining rollout
+
+- Real Worker/D1/MCP tests exercise canonical acceptance and durable queued state, same-action
+  concurrency, distinct competing failed-retry approvals, a late outbox failure rolling back
+  consumption/refund/attempt/order version, exact amounts, cancellation then separately
+  approved refund, definitive failed retry, same-key unknown recovery and attention, committed
+  lost processor response, concurrent/repeated finalization, session replacement and expiry,
+  and foreign-history denial.
+- Actual local Workflow bindings run success, seeded unknown reconciliation through real repair
+  dispatch, lost-response step retry, and exhausted reconciliation retries without changing the
+  attempt/key or authorizing another payment. Existing consent, transport, data, and chat tests
+  remain part of the regression suite.
+- Apply migration 0006 to demo before deploying the matching Commerce/app Workers. No remote
+  migration, deployment, commit, or push has been performed during this implementation.
+  Milestone 6 remains the release-hardening milestone.
+
+Final verification: **67 automated tests passed**. Formatting, lint, TypeScript, fixture
+SQL consistency, local/demo generated types, demo build, and deployment-artifact checks
+passed. The artifact check verifies the private Commerce target, correct refund Workflow
+binding/class, once-per-minute repair schedule, and absence of local signing keys.
+Independent security and TypeScript reviews have no remaining blockers after replay-race,
+validation-recovery, planned-scenario, and refund-driven order-refresh fixes.
+
+Manual local browser verification approved Ada’s exact 73.00 EUR refund, observed completed
+status and shipped/refunded order state, and retained completion after refresh. Screenshot:
+`.wrangler/milestone5-refund.png`. A separate real Workers AI/local Vite check used a natural
+full-refund request, created the canonical approval, executed the real local Workflow,
+verified payment refunded with fulfillment unchanged, and replayed the action safely.
+These checks changed only isolated local synthetic data; the deployed Milestone 4 demo
+and remote database remain unchanged. No new package dependencies were introduced.
+
+
+## 23. Milestone 5 and message composer rollout — 2026-10-23
+
+- Applied `0006_refund_attention.sql` to remote `customer-service-demo`. No seed or reset was run.
+- Built/checked artifacts, deployed Commerce first, then the app.
+- Commerce version: `1514dc9c-2967-4ebb-b75d-fb4d1c2837b5`.
+- Application version: `c5f2657b-7324-4369-8dcd-ab56f11ed406`.
+- Demo: https://customer-service-agent-demo.customer-service-lisbon.workers.dev
+- Deployment confirmed the private Commerce `REFUNDS` binding, `commerce-refunds-demo`
+  Workflow, and `* * * * *` repair schedule. Read-only checks confirmed six applied
+  migrations, no foreign-key violations, and unchanged sealed fixture catalogs (v2 active).
+- Live Workers AI natural full-refund request created an exact 73 EUR proposal. Explicit
+  approval accepted pending work; the deployed Workflow completed it, order payment became
+  refunded while fulfillment stayed shipped, and replay returned its saved result. The
+  verification used a fresh synthetic namespace, not an existing reviewer’s action.
+- Live browser verification confirmed the full-width single-row expanding message field,
+  Send below it, Shift+Enter inserting a newline without submission, and Enter sending the
+  complete multiline message and clearing the field.
+- Prompts 41–42 are appended chronologically to PROMPTS.md. No commit/push was requested
+  for this rollout, so source and rollout documentation remain uncommitted/unpushed.
+
+Post-rollout D1 inspection confirmed the verification refund was completed for 7300 EUR
+minor units, with attempt number 1, confirmed processor success, dispatched state, and
+exactly one successful settlement. Live UI screenshot: `.wrangler/deployed-composer.png`.
+
+## 24. Approval-card visibility follow-up — implemented locally
+
+- Active approval and retry cards now appear directly above the message composer,
+  with an amber panel, an Approval required heading, and a blue action-specific
+  button such as Approve cancellation. Previous actions are collapsed below it.
+- Cancellation copy explains that refunds require a separate proposal and approval.
+  The model prompt sequences combined cancellation/refund requests, and historical
+  tool results no longer claim an approval is still pending after it has completed.
+- Action refresh runs when chat status changes as well as on the existing interval.
+- Verified browser approval/rejection and cancelled/paid order state; formatting,
+  lint, TypeScript, and all 40 session tests passed. Scoped code review passed.
+- Prompt 43 recorded in PROMPTS.md. No migration, deployment, commit, or push in
+  this follow-up. Screenshot: `.wrangler/approval-card.png`.
+
+## 25. Approval-card rollout and source publication
+
+- Deployed both demo Workers using `npm run deploy`; build and artifact verification
+  passed. Commerce version: `df2376bc-8964-4fd2-95c6-920126890733`.
+  Application version: `526ec99d-d1ef-4fa0-aa48-080f2b089e28`.
+- Live natural cancellation/refund request produced the highlighted cancellation
+  card above the message input. Workers AI correctly requested card approval and
+  explained the separate refund proposal after cancellation. No approval was
+  granted in this verification, and no cancellation/refund was executed.
+- Screenshot: `.wrangler/deployed-approval-card.png`. No additional migration or
+  reseeding was needed; migration 0006 was applied during the earlier M5 rollout.
+- Prompt 44 appended chronologically. This publication includes the previously
+  uncommitted M5 refund workflow, migration 0006, composer, and approval-card update.
