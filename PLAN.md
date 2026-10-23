@@ -1,6 +1,6 @@
 # Customer service agent build plan
 
-Status: **Milestones 1–6 are implemented and deployed**, including migration 0007, usage controls and chat-maintenance scheduling. The optional protected GitHub deployment path still needs external repository environment configuration. See sections 18–27 for implementation and rollout records. Historical records describe their state at the time.
+Status: **Milestones 1–6 are implemented and deployed**, including migration 0007, usage controls and chat-maintenance scheduling. The optional protected GitHub deployment path still needs external repository environment configuration. The inline action-result and message-card UI follow-up is also deployed. See sections 18–29 for implementation and rollout records. Historical records describe their state at the time.
 
 ## 1. Objective and agreed scope
 
@@ -951,3 +951,55 @@ migration listing reports none outstanding. No reseeding or reset was performed.
 - No refund was deliberately held pending across this deployment. Accepted-work
   continuity is covered by existing local runtime tests; a dedicated deployed
   cross-version pending-refund scenario was not claimed or performed here.
+
+
+## 28. Inline action outcomes and distinct chat messages — local follow-up
+
+- Replaced the Previous actions section below the input with canonical action
+  summaries attached to the original proposal's chat message. Repeated references
+  render an action once; actions whose original message was pruned remain visible
+  at the end of the conversation. Pending approval/retry controls stay above input.
+- Conversation has a light slate background; individual user/assistant messages
+  are white cards with borders, spacing and subtle shadows. Outcome callouts use
+  green success, red failure, amber processing/expiry and neutral rejection/revocation.
+- Refund labels come from the validated refund result, rather than the action's
+  completed processing state. Elin's first failed refund remains a red Refund failed
+  update even when a separately approved second attempt succeeds in its own green
+  update. Summaries include the requested action/order and its canonical result.
+- Historical tool wording points to conversation updates, and the pending approval
+  component no longer renders the obsolete raw completed/action-result branches.
+- Six new tests cover failed/pending/successful/malformed refund outcomes, proposal
+  decisions/expiry/conflict, deduplicated message linking and missing-message fallback.
+  All **82 tests passed**. Formatting, lint, TypeScript, demo build and artifact
+  verification passed. Scoped code review passed.
+- Local browser verification exercised existing cancellation/rejection, fresh Elin
+  refund failure, separately approved successful retry, and refresh persistence.
+  Screenshot: `.wrangler/inline-action-chat.png`.
+- Prompt 57 recorded chronologically; later prompt-history entries from other work
+  are preserved. Reviewer and technical notes updated. No schema/backend changes,
+  migration, deployment, commit or push in this UI follow-up.
+
+
+## 29. Inline action-outcome UI rollout
+
+Following prompt 60, deployed the inline action-summary and message-card update
+with the existing demo deployment script. No migration, seeding or reset was needed.
+
+- Commerce version: `078e07fb-b72c-4395-87a2-5b52df2de970`.
+- Application version: `cb907b10-ceca-49cd-a86a-90eaabd4fe53`.
+- Demo build and artifact verification passed; existing private service binding,
+  shared D1, refund Workflow and both cron schedules remain configured.
+- `npm run smoke:demo` passed isolated session issuance, signed app-origin private
+  MCP reads, anonymous denial and disabled local probe route.
+- Live browser verification restored prior history into distinct white cards on a
+  slate conversation background. Requested and explicitly approved cancellation
+  of ord_101 in the agent's synthetic Ada session. The green Order cancelled update
+  appeared inside the original assistant message; canonical order became cancelled
+  while payment stayed paid. Approval controls disappeared and no Previous actions
+  section appeared below the input.
+- Screenshot: `.wrangler/deployed-inline-action-chat.png`. Failed refund and separately
+  approved successful retry were verified locally in section 28; this live rollout
+  used cancellation to verify the inline result path.
+- Updated current technical/plan status and appended prompt 60 chronologically;
+  subsequent prompt entries from concurrent documentation work are preserved.
+  No commit or push of this UI follow-up was requested.

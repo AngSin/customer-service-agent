@@ -4,6 +4,7 @@ import { useAgentChat } from "@cloudflare/ai-chat/react";
 import { Button, Surface, Text } from "@cloudflare/kumo";
 import { refundSchema } from "../shared/commerce-contract";
 import { CommerceResultView } from "./commerce-result";
+import { ActionSummary, linkActionSummaries } from "./action-summary";
 import type { ChatAgent } from "./server";
 import type { actionView } from "../shared/consent";
 
@@ -182,11 +183,11 @@ function ApprovalCard({
       )}
       <p>Expires: {new Date(action.expiresAt).toLocaleTimeString()}</p>
       <p>
-        {["accepted", "completed"].includes(action.state)
-          ? action.state
-          : expired && ["pending", "approved"].includes(action.decision)
-            ? "Expired — a new proposal is required."
-            : action.decision}
+        {expired
+          ? "Expired — a new proposal is required."
+          : action.decision === "approved"
+            ? "Approved — awaiting execution."
+            : "Awaiting your decision."}
       </p>
       {action.state === "proposed" &&
         action.decision === "pending" &&
@@ -216,13 +217,6 @@ function ApprovalCard({
           <Button disabled={busy} onClick={() => void retry()}>
             Retry approved action
           </Button>
-        )}
-      {["accepted", "completed"].includes(action.state) &&
-        action.result != null && (
-          <CommerceResultView
-            name={action.tool}
-            result={{ ok: true, data: action.result, request_id: "stored" }}
-          />
         )}
       {error && <p role="alert">{error}</p>}
     </Surface>
@@ -355,6 +349,7 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
   const previousActions = actions.filter(
     (action) => !activeActions.includes(action)
   );
+  const summaries = linkActionSummaries(messages, previousActions);
   return (
     <>
       <Surface className="rounded-xl p-4 space-y-2" aria-label="Current orders">
@@ -385,15 +380,26 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
           <Button onClick={refreshRefunds}>Refresh refunds</Button>
         </Surface>
       )}
-      <Surface className="rounded-xl p-4 space-y-4 min-h-64">
+      <section
+        aria-label="Conversation"
+        className="rounded-xl border border-slate-200 bg-slate-100 p-4 space-y-4 min-h-64 text-slate-950"
+      >
         {messages.length === 0 && (
           <p>
             Ask about your previous orders, delivery details, or saved address.
           </p>
         )}
         {messages.map((message) => (
-          <div key={message.id} className="space-y-2">
-            <Text bold>{message.role}</Text>
+          <article
+            key={message.id}
+            aria-label={
+              message.role === "user" ? "Your message" : "Assistant message"
+            }
+            className="rounded-xl border border-slate-200 bg-white p-4 space-y-3 shadow-sm break-words"
+          >
+            <p className="text-sm font-semibold text-slate-600">
+              {message.role === "user" ? "You" : "Assistant"}
+            </p>
             {message.parts.map((part, index) =>
               part.type === "text" ? (
                 <p className="whitespace-pre-wrap" key={index}>
@@ -413,9 +419,25 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
                 </div>
               ) : null
             )}
-          </div>
+            {summaries.byMessage.get(message.id)?.map((action) => (
+              <ActionSummary
+                key={action.actionId}
+                action={action}
+                now={actionClock}
+              />
+            ))}
+          </article>
         ))}
-      </Surface>
+        {summaries.unlinked.map((action) => (
+          <article
+            key={action.actionId}
+            aria-label="Action update"
+            className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"
+          >
+            <ActionSummary action={action} now={actionClock} />
+          </article>
+        ))}
+      </section>
       <section
         aria-label="Actions awaiting approval"
         aria-live="polite"
@@ -481,21 +503,6 @@ function Chat({ session, csrf }: { session: SessionView; csrf: string }) {
         <p role="alert">
           {notice || "Unable to connect. Refresh to check your session."}
         </p>
-      )}
-      {previousActions.length > 0 && (
-        <details className="space-y-3">
-          <summary className="cursor-pointer font-semibold">
-            Previous actions ({previousActions.length})
-          </summary>
-          {previousActions.map((action) => (
-            <ApprovalCard
-              key={action.actionId}
-              action={action}
-              csrf={csrf}
-              refresh={refresh}
-            />
-          ))}
-        </details>
       )}
     </>
   );

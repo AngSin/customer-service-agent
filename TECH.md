@@ -39,8 +39,10 @@ After the setup below, choose **Ada** and click **Start session**. Natural-langu
 
 The **Current orders** panel loads canonical data from private MCP when the chat mounts,
 when proposal/completion state changes, or when **Refresh orders** is clicked. Historical
-chat tool results are labelled “when checked”; completed approval cards retain their saved
-result after refresh. If a response is lost after approving, use **Retry approved action**;
+chat tool results are labelled “when checked”. The deployed UI places action
+outcomes beside their original request in a conversation with white message cards,
+using green for success, red for failure, amber for processing/expiry and neutral
+rejected/revoked updates. These updates retain their saved results after refresh. If a response is lost after approving, use **Retry approved action**;
 the same action ID cannot apply its effects twice. Unaccepted approvals expire after five
 minutes and are revoked by **Start new session**. Use a private browser window for an
 independent session; chat cannot change customer identity.

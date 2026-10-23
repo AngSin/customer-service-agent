@@ -1,4 +1,10 @@
-### Testing:
+## Prompt History
+You can find it [here](https://github.com/AngSin/customer-service-agent/blob/main/PROMPTS.md).
+
+## Cloudflare Product Usage
+You can find a summary of the cloudflare products used [here](https://github.com/AngSin/customer-service-agent/blob/main/COMPONENTS.md).
+
+## Testing:
 
 Deployed on: [Example Parcel Shop](https://customer-service-agent-demo.customer-service-lisbon.workers.dev).
 

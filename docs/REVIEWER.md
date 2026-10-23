@@ -10,7 +10,9 @@ session** before each independent scenario. This copies all six personas into an
 isolated namespace; the current customer can access only their own records. Read
 results describe state when checked. Inspect **Current orders**, **Current refunds**
 and the action card for current state. Approvals appear immediately above the input;
-previous actions are collapsed below it. Enter sends; Shift+Enter inserts a newline.
+action outcomes appear beside their original request in the conversation, with
+green success, red failure, amber processing/expiry and neutral rejection/revocation
+updates. A finished refund action can still have a failed refund result. Enter sends; Shift+Enter inserts a newline.
 
 | Scenario | Customer and natural prompt | Expected result |
 | --- | --- | --- |
@@ -18,7 +20,7 @@ previous actions are collapsed below it. Enter sends; Shift+Enter inserts a newl
 | Details | Ada: “What is in order ord_102 and where is it going?” | Verified owned items, address and tracking. |
 | Profile | Ada: “What address do you have saved for me?” | Ada's saved profile, without selecting an identity in tools. |
 | Cancel then refund | Ada: “Cancel order ord_101 and refund me.” | Cancellation card first; no change until Approve cancellation. After approval: cancelled/paid. Then ask “Refund my cancelled order ord_101.” A separate 42 EUR refund card requires approval. Pending eventually becomes completed; order stays cancelled and becomes refunded. |
-| Reject | Fresh Ada: “Cancel ord_101.” Click Reject. | No cancellation or refund. Card moves to Previous actions. |
+| Reject | Fresh Ada: “Cancel ord_101.” Click Reject. | No cancellation or refund. A neutral rejected update appears in the conversation. |
 | Typed consent | Fresh Ada: “Cancel ord_101.” Then type “yes”. | No execution. Only the card's Approve button records consent. |
 | Expiry | Fresh Ada: request cancellation, wait five minutes. | Buttons expire; a new proposal is required. |
 | Fulfillment restriction | Ada: “Cancel ord_102.” | Shipped order cannot be cancelled; no mutation. |

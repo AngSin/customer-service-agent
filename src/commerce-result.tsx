@@ -29,7 +29,7 @@ export function CommerceResultView({
     return (
       <p role={output.error.code === "APPROVAL_REQUIRED" ? "status" : "alert"}>
         {output.error.code === "APPROVAL_REQUIRED"
-          ? "Approval was requested. If still pending, review the highlighted card above the message field and click its Approve button to continue. Otherwise, check Previous actions for its current status."
+          ? "Approval was requested. If still pending, review the highlighted card above the message field and click its Approve button to continue. Action updates in the conversation show its current status."
           : name === "refund_order" && output.error.code === "NOT_ELIGIBLE"
             ? "A refund cannot start yet. Refunds require a paid order that is cancelled, shipped, or delivered. For a paid unshipped order, approve cancellation first, then request a separate refund approval."
             : output.error.message}
