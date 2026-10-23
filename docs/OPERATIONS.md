@@ -9,7 +9,7 @@ All money remains simulated. Use Node 24 and the pinned npm lockfile.
 
 For local development: `npm ci`, `npm run types`, `npm run db:migrate`,
 `npm run db:seed`, then `npm run dev`. Seeding is repeatable and preserves live
-session changes; see README for fixture details. No reseed is needed for M6.
+session changes; see [TECH.md](../TECH.md) for fixture details. No reseed is needed for M6.
 
 For an existing demo release:
 

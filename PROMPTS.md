@@ -593,3 +593,41 @@ ok noted, please migrate, then deploy the changes
 ```text
 please commit and push this
 ```
+
+## 51. User — explain the local database reset command
+
+```text
+can you tell me what npm run db:reset does?
+```
+
+## 52. User — repeat the database reset question
+
+```text
+can you tell me what npm run db:reset does?
+```
+
+## 53. User — map customers and orders to test flows
+
+```text
+can you tell me which customers are good for which flow? for e.g. which one shows a successful cancel/refund, for which customer/order a cancel/refund fails etc so i can test all the flows
+```
+
+## 54. User — complete the README test-data table and remove raw duplicates
+
+```text
+Thanks, i've documented these in the README.md, but i copy pasted the table with data as is, I added the first 2 rows of data in a table, can you add the others and remove the raw data
+```
+
+## 55. User — investigate Elin order 501 succeeding on the first refund attempt
+
+Attachment: Agent Starter.pdf
+
+```text
+but look at teh attached doc, i refunded order 501 from elin, and it worked in the first try
+```
+
+## 56. User — review, commit, and push the README reorganization
+
+```text
+ok i see, can you look at the unstaged/staged files, i created a new readme file - please commit and push the changes
+```

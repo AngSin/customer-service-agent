@@ -17,7 +17,7 @@
     "types": "node scripts/types.mjs",
     "format": "oxfmt --write .",
     "lint": "oxlint src/ shared/ workers/commerce/src/ tests/*.ts scripts/ tests/*.mjs",
-    "check": "oxfmt --check src shared workers/commerce scripts tests vite.config.ts tsconfig.json wrangler.jsonc package.json .oxfmtrc.json .github/workflows/ci.yml README.md && npm run lint && npm run typecheck",
+    "check": "oxfmt --check src shared workers/commerce scripts tests vite.config.ts tsconfig.json wrangler.jsonc package.json .oxfmtrc.json .github/workflows/ci.yml TECH.md && npm run lint && npm run typecheck",
     "build": "vite build",
     "build:demo": "CLOUDFLARE_ENV=demo vite build",
     "types:check": "node scripts/types.mjs --check",
