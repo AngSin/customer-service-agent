@@ -694,3 +694,41 @@ Read-only tools first (recommended)
 ```text
 thanks, please commit and push this
 ```
+
+## 67. User — restore the documented starting data after UI testing
+
+```text
+i've done some testing in the UI so the data documented in README.md isn't correct anymore. can you add a new fixture and return the data to the first version?
+```
+
+## 68. User — choose a fresh session to restore starting data
+
+```text
+Restore with a fresh session (recommended)
+```
+
+## 69. User — assess coverage of the assignment requirements
+
+```text
+ok, i think we're good here. about the job description, this is what they said:
+
+
+
+We plan to fast track candidates who complete an assignment to build a type of [AI-powered application](https://agents.cloudflare.com/) on Cloudflare. An AI-powered application should include the following components:\
+
+
+- LLM (recommend using Llama 3.3 on Workers AI), or an external LLM of your choice
+- Workflow / coordination (recommend using Workflows, Workers or Durable Objects)
+- User input via chat or voice (recommend using Pages or Realtime)
+- Memory or state
+
+
+
+i think our application covers it all. is there something missing?
+```
+
+## 70. User — commit and push prompt history and pending files
+
+```text
+Ok please commit and push these prompts and any unstaged files. I will improve the readme myself
+```

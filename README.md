@@ -12,6 +12,20 @@ For setup and architecture, see [TECH.md](TECH.md).
 
 Choose the customer and click Start new session before each independent test. That restores their starting data. Every mutation requires clicking Approve.
 
+### Restore starting data after testing
+
+1. Select the customer under **Customer for new session**.
+2. Click **Start new session**, even if you selected the same customer.
+3. Use the fresh chat and **Current orders** panel to test the starting states below.
+
+This creates a fresh copy of all six customers' original fixture data and selects
+the chosen customer. Your previous session's changes do not alter the fixture or
+the README baseline. Its history is retained, and unexecuted approvals are
+invalidated. Refreshing the page keeps the current session and its changed data.
+
+A new fixture version is needed when the starting scenarios themselves change;
+reseeding or adding a fixture version does not reset an existing session.
+
 Some example flows:
 
 1. Successful cancellation → refund — Ada, ord_101
